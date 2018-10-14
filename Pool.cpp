@@ -1,5 +1,7 @@
 #include "Pool.h"
 #include "Slab_Allocator.h"
+#include "IPromise.h"
+#include <mutex>
 #include <iostream>
 #define MEGA_BYTE 1048576
 
@@ -15,16 +17,16 @@ namespace Promises {
 
     //user should not need to pass memory pool around
     Pool::Pool(const Pool& p)
-        :_memory(p._memory)
+        :_memory(p._memory),
+        _promises(p._promises)
     {
         //do nothing
     }
 
     Pool::~Pool(void)
     {
-		for (size_t i = 0; i < _promises.size(); i++)
+        for (size_t i = 0; i < _promises.size(); i++)
 		{
-			std::cout << "here" << std::endl;
 			((IPromise*)_promises[i])->Join();
 		}
 
@@ -60,6 +62,7 @@ namespace Promises {
             return *this;
         
         this->_memory = p._memory;
+        this->_promises = p._promises;
 
         return *this;
     }

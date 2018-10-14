@@ -1,86 +1,29 @@
+#include "IPromise.h"
+#include "Slab_Allocator.h"
 #include <cstdlib>
 #include <vector>
-#include "Slab_Allocator.h"
+#include <condition_variable>
+#include <mutex>
 
 #ifndef POOL_H
 #define POOL_H
 
 namespace Promises {
 
-	enum Status
-	{
-		Pending,
-		Resolved,
-		Rejected
-	};
-
-	class State
-	{
-	public:
-		State(void)
-			: _status(Pending)
-		{
-			//do nothing
-		}
-
-		State(Status stat)
-			: _status(stat)
-		{
-			//do nothing
-		}
-
-		State(const State &state)
-			: _status(state._status)
-		{
-			//do nothing
-		}
-
-		virtual ~State(void) {}
-
-		bool operator==(Status stat)
-		{
-			return this->_status == stat;
-		}
-
-		bool operator!=(Status stat)
-		{
-			return this->_status != stat;
-		}
-
-		virtual void *getValue(void) = 0;
-		virtual std::exception getReason(void) = 0;
-
-	private:
-		Status _status;
-	};
-
-	class IPromise
-	{
-
-	public:
-		virtual ~IPromise(void) {}
-		virtual State* getState(void) = 0;
-
-	protected:
-		virtual void _resolve(State* state) = 0;
-		virtual void _reject(State* state) = 0;
-		virtual void Join(void) = 0;
-
-		friend class Settlement;
-		friend class Pool;
-	};
-
 	//Pool is a class to manage the memory resources on a system.
 	//the class allocates memory in 1MB chunks using the slab allocator
 	class Pool
 	{
 	public:
+
 		static Pool* Instance();
 		~Pool(void);
 
 		template<typename T>
 		T* allocate(bool joinable = false)
 		{
+			this->_mem_lock.lock();
+
 			void* temp = alloc_mem(_memory, sizeof(T));
 			T* mem = (T*)temp;
 			new (mem) T();
@@ -88,12 +31,16 @@ namespace Promises {
 			if (joinable)
 				this->_promises.push_back(mem);
 
+			this->_mem_lock.unlock();
+
 			return mem;
 		}
 
 		template<typename T, typename IN1>
 		T* allocate(IN1 arg1, bool joinable = false)
 		{
+			this->_mem_lock.lock();
+
 			void* temp = alloc_mem(_memory, sizeof(T));
 			T* mem = (T*)temp;
 			new (mem) T(arg1);
@@ -101,12 +48,16 @@ namespace Promises {
 			if (joinable)
 				this->_promises.push_back(mem);
 
+			this->_mem_lock.unlock();
+
 			return mem;
 		}
 
 		template<typename T, typename IN1, typename IN2>
 		T* allocate(IN1 arg1, IN2 arg2, bool joinable = false)
 		{
+			this->_mem_lock.lock();
+
 			void* temp = alloc_mem(_memory, sizeof(T));
 			T* mem = (T*)temp;
 			new (mem) T(arg1, arg2);
@@ -114,12 +65,17 @@ namespace Promises {
 			if (joinable)
 				this->_promises.push_back(mem);
 
+			this->_mem_lock.unlock();
+
 			return mem;
 		}
 
 		void deallocate(void* mem);
 
+		void promise_complete(void);
+
 	private:
+
 		Pool(void);
 		Pool(const Pool& p);
 		Pool& operator = (const Pool& p);
@@ -127,6 +83,7 @@ namespace Promises {
 		struct slab_allocator* _memory;
 		static bool _is_created;
 		static Pool* _pool;
+		std::mutex _mem_lock;
 		std::vector<void*> _promises;
 
 	};
