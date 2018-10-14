@@ -1,0 +1,23 @@
+project (Promises) {
+    exename = Promises
+    install = .
+
+    specific(make) {
+        compile_flags += -std=c++11
+    }
+
+    Header_Files {
+        IPromise.h
+        Promise.h
+        State.h
+        Pool.h
+        Slab_Allocator.h
+    }
+
+    Source_Files {
+        Slab_Allocator.cpp
+        Pool.cpp
+        source.cpp
+    }
+
+}
