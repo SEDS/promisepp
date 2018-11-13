@@ -25,11 +25,6 @@ namespace Promises {
 
     Pool::~Pool(void)
     {
-        for (size_t i = 0; i < _promises.size(); i++)
-		{
-			((IPromise*)_promises[i])->Join();
-		}
-
         if (_memory != NULL || _memory != nullptr)
         {
             free_pool(_memory);

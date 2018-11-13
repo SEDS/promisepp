@@ -5,6 +5,7 @@
 #include <functional>
 #include <stdexcept>
 #include <thread>
+#include <condition_variable>
 #include <vector>
 #include <string>
 #include <memory>
@@ -28,6 +29,41 @@ namespace Promises
 
 	//init the memory pool as a unique ptr so it will be destructed once program terminates
 	static std::unique_ptr<Promises::Pool> memory_pool(Promises::Pool::Instance());
+
+	//Finisher - a class that safely destroys the environment and waits for all Promises to be fulfilled before termination.
+	class Finisher {
+		public:
+			explicit Finisher(void)
+			{
+				//nothing to do
+			}
+
+
+			void add_promise(IPromise* prom) {
+				_lock.lock();
+
+				_promises.push_back(prom);
+
+				_lock.unlock();
+			}
+
+			void operator () (void) {
+				_lock.lock();
+
+				for(size_t i=0; i<_promises.size(); ++i) {
+					_promises[i]->Join();
+					// memory_pool->deallocate(_promises[i]);
+				}
+
+				_lock.unlock();
+			}
+
+		private:
+			std::mutex _lock;
+			std::vector<IPromise*> _promises;
+	};
+
+	static Finisher fin;
 
 	class RejectedLambda : public ILambda
 	{
@@ -89,6 +125,7 @@ namespace Promises
 	class Promise : public IPromise
 	{
 		friend class Pool;
+		friend class Awaiter;
 	public:
 		Promise(void)
 			: _id(std::to_string(_promiseID + 1)),
@@ -169,6 +206,8 @@ namespace Promises
 
 			_stateLock.unlock();
 
+			fin.add_promise(continuation);
+
 			return continuation;
 		}
 
@@ -197,6 +236,8 @@ namespace Promises
 			}
 
 			_stateLock.unlock();
+
+			fin.add_promise(continuation);
 
 			return continuation;
 		}
@@ -253,6 +294,7 @@ namespace Promises
 		ILambda* _settleHandle;
 		ILambda* _resolveHandle;
 		ILambda* _rejectHandle;
+		std::condition_variable _cv;
 		std::mutex _stateLock;
 		std::thread _th;
 		std::vector<Promise*> _Promises;
@@ -262,6 +304,8 @@ namespace Promises
 			_stateLock.lock();
 			_state = state;
 			_stateLock.unlock();
+
+			_cv.notify_all();
 
 			for (size_t i = 0; i < _Promises.size(); i++)
 			{
@@ -275,6 +319,8 @@ namespace Promises
 			_state = state;
 			_stateLock.unlock();
 
+			_cv.notify_all();
+
 			for (size_t i = 0; i < _Promises.size(); i++)
 			{
 				_Promises[i]->_settle(nullptr, _state);
@@ -284,6 +330,10 @@ namespace Promises
 		virtual void Join(void)
 		{
 			this->_th.join();
+			std::unique_lock<std::mutex> lk(this->_stateLock);
+
+			if(*_state == Pending)
+				this->_cv.wait(lk);
 		}
 
 		void _withSettleHandle(void)
@@ -453,6 +503,7 @@ namespace Promises
 
 		return prom;
 	}
+	
 
 	Promise* all(std::vector<Promise*> &promises)
 	{
@@ -519,6 +570,7 @@ namespace Promises
 		});
 
 		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l, true);
+		fin.add_promise(continuation);
 
 		return continuation;
 	}
@@ -588,8 +640,29 @@ namespace Promises
 		});
 
 		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l, true);
+		fin.add_promise(continuation);
+
 		return continuation;
 	}
+
+
+	//Awaiter - a class that performs Async08 'await' functionality
+	class Awaiter {
+		public:
+			explicit Awaiter(void)
+			{
+				//nothing to do
+			}
+
+			std::unique_ptr<Promise> operator () (IPromise* prom) {
+				prom->Join();
+				State* s = prom->getState();
+				std::unique_ptr<Promise> unique_prom(new Promise(s));
+				return unique_prom;
+			}
+	};
+
+	static Awaiter await;
 
 } // namespace Promises
 
@@ -597,6 +670,8 @@ Promises::Promise* promise(std::function<void(Promises::Settlement)> func)
 {
 	Promises::SettlementLambda *l = Promises::memory_pool->allocate<Promises::SettlementLambda, std::function<void(Promises::Settlement)>>(func);
 	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda*>(l, true);
+
+	Promises::fin.add_promise(prom);
 
 	return prom;
 }
