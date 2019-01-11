@@ -13,6 +13,7 @@
 #include <iterator>
 #include <map>
 #include <iostream>
+#include <cstdlib>
 
 namespace Promises
 {
@@ -47,7 +48,7 @@ namespace Promises
 				_lock.unlock();
 			}
 
-			void operator () (void) {
+			void finish (void) {
 				_lock.lock();
 
 				for(size_t i=0; i<_promises.size(); ++i) {
@@ -63,7 +64,12 @@ namespace Promises
 			std::vector<IPromise*> _promises;
 	};
 
-	static Finisher fin;
+	static Finisher finisher;
+	static bool exit_handle_created = false;
+	
+	void fin(void) {
+		finisher.finish();
+	}
 
 	class RejectedLambda : public ILambda
 	{
@@ -125,7 +131,10 @@ namespace Promises
 	class Promise : public IPromise
 	{
 		friend class Pool;
-		friend class Awaiter;
+
+		template <typename T>
+		friend T* await(IPromise*);
+
 	public:
 		Promise(void)
 			: _id(std::to_string(_promiseID + 1)),
@@ -192,21 +201,21 @@ namespace Promises
 
 			if (_state == nullptr || *_state == Pending)
 			{
-				continuation = memory_pool->allocate<Promise>(reslam, rejlam, true);
+				continuation = memory_pool->allocate<Promise>(reslam, rejlam);
 				_Promises.push_back(continuation);
 			}
 			else if (*_state == Resolved)
 			{
-				continuation = memory_pool->allocate<Promise>(reslam, this->_state, true);
+				continuation = memory_pool->allocate<Promise>(reslam, this->_state);
 			}
 			else
 			{
-				continuation = memory_pool->allocate<Promise>(rejlam, this->_state, true);
+				continuation = memory_pool->allocate<Promise>(rejlam, this->_state);
 			}
 
 			_stateLock.unlock();
 
-			fin.add_promise(continuation);
+			finisher.add_promise(continuation);
 
 			return continuation;
 		}
@@ -227,17 +236,17 @@ namespace Promises
 			if (_state == nullptr || *_state == Pending)
 			{
 				ILambda* auxilliaryLam = memory_pool->allocate<ResolvedLambda<T>>(handler);
-				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, auxilliaryLam, true);
+				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, auxilliaryLam);
 				_Promises.push_back(continuation);
 			}
 			else
 			{
-				continuation = memory_pool->allocate<Promise, ILambda*, State*>(lam, _state, true);
+				continuation = memory_pool->allocate<Promise, ILambda*, State*>(lam, _state);
 			}
 
 			_stateLock.unlock();
 
-			fin.add_promise(continuation);
+			finisher.add_promise(continuation);
 
 			return continuation;
 		}
@@ -569,8 +578,8 @@ namespace Promises
 			}
 		});
 
-		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l, true);
-		fin.add_promise(continuation);
+		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l);
+		finisher.add_promise(continuation);
 
 		return continuation;
 	}
@@ -639,39 +648,42 @@ namespace Promises
 			}
 		});
 
-		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l, true);
-		fin.add_promise(continuation);
+		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l);
+		finisher.add_promise(continuation);
 
 		return continuation;
 	}
 
 
-	//Awaiter - a class that performs Async08 'await' functionality
-	class Awaiter {
-		public:
-			explicit Awaiter(void)
-			{
-				//nothing to do
-			}
+	//await - suspend execution until the given promise is settled.
+	//If promise failed, the reject reason is thrown.
+	template <typename T>
+	T* await(IPromise* prom) {
+		prom->Join();
+		std::cout << "in await" << std::endl;
+		State* s = prom->getState();
 
-			std::unique_ptr<Promise> operator () (IPromise* prom) {
-				prom->Join();
-				State* s = prom->getState();
-				std::unique_ptr<Promise> unique_prom(new Promise(s));
-				return unique_prom;
-			}
-	};
+		if (*s == Rejected) {
+			throw s->getReason();
+		}
 
-	static Awaiter await;
+		T* value = (T*)s->getValue();
+		return value;
+	}
 
 } // namespace Promises
 
 Promises::Promise* promise(std::function<void(Promises::Settlement)> func)
 {
 	Promises::SettlementLambda *l = Promises::memory_pool->allocate<Promises::SettlementLambda, std::function<void(Promises::Settlement)>>(func);
-	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda*>(l, true);
+	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda*>(l);
 
-	Promises::fin.add_promise(prom);
+	Promises::finisher.add_promise(prom);
+
+	if (!Promises::exit_handle_created) {
+		std::atexit(Promises::fin);
+		Promises::exit_handle_created = true;
+	}
 
 	return prom;
 }

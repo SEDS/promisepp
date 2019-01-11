@@ -18,8 +18,10 @@ namespace Promises {
 
 		friend class Settlement;
 		friend class Pool;
-		friend class Awaiter;
 		friend class Finisher;
+
+		template <typename T>
+		friend T* await(IPromise*);
 	};
 }
 

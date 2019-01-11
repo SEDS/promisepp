@@ -17,8 +17,7 @@ namespace Promises {
 
     //user should not need to pass memory pool around
     Pool::Pool(const Pool& p)
-        :_memory(p._memory),
-        _promises(p._promises)
+        :_memory(p._memory)
     {
         //do nothing
     }
@@ -57,7 +56,6 @@ namespace Promises {
             return *this;
         
         this->_memory = p._memory;
-        this->_promises = p._promises;
 
         return *this;
     }
