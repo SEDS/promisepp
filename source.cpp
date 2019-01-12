@@ -25,5 +25,5 @@ int main(void)
 		return Promises::Resolve<std::string>("yes new chain");
 	});
 
-	return 0;
+	std::exit(0);
 }

@@ -5,6 +5,7 @@
 #include <functional>
 #include <stdexcept>
 #include <thread>
+#include <condition_variable>
 #include <vector>
 #include <string>
 #include <memory>
@@ -12,6 +13,7 @@
 #include <iterator>
 #include <map>
 #include <iostream>
+#include <cstdlib>
 
 namespace Promises
 {
@@ -28,6 +30,46 @@ namespace Promises
 
 	//init the memory pool as a unique ptr so it will be destructed once program terminates
 	static std::unique_ptr<Promises::Pool> memory_pool(Promises::Pool::Instance());
+
+	//Finisher - a class that safely destroys the environment and waits for all Promises to be fulfilled before termination.
+	class Finisher {
+		public:
+			explicit Finisher(void)
+			{
+				//nothing to do
+			}
+
+
+			void add_promise(IPromise* prom) {
+				_lock.lock();
+
+				_promises.push_back(prom);
+
+				_lock.unlock();
+			}
+
+			void finish (void) {
+				_lock.lock();
+
+				for(size_t i=0; i<_promises.size(); ++i) {
+					_promises[i]->Join();
+					// memory_pool->deallocate(_promises[i]);
+				}
+
+				_lock.unlock();
+			}
+
+		private:
+			std::mutex _lock;
+			std::vector<IPromise*> _promises;
+	};
+
+	static Finisher finisher;
+	static bool exit_handle_created = false;
+	
+	void fin(void) {
+		finisher.finish();
+	}
 
 	class RejectedLambda : public ILambda
 	{
@@ -89,6 +131,10 @@ namespace Promises
 	class Promise : public IPromise
 	{
 		friend class Pool;
+
+		template <typename T>
+		friend T* await(IPromise*);
+
 	public:
 		Promise(void)
 			: _id(std::to_string(_promiseID + 1)),
@@ -155,19 +201,21 @@ namespace Promises
 
 			if (_state == nullptr || *_state == Pending)
 			{
-				continuation = memory_pool->allocate<Promise>(reslam, rejlam, true);
+				continuation = memory_pool->allocate<Promise>(reslam, rejlam);
 				_Promises.push_back(continuation);
 			}
 			else if (*_state == Resolved)
 			{
-				continuation = memory_pool->allocate<Promise>(reslam, this->_state, true);
+				continuation = memory_pool->allocate<Promise>(reslam, this->_state);
 			}
 			else
 			{
-				continuation = memory_pool->allocate<Promise>(rejlam, this->_state, true);
+				continuation = memory_pool->allocate<Promise>(rejlam, this->_state);
 			}
 
 			_stateLock.unlock();
+
+			finisher.add_promise(continuation);
 
 			return continuation;
 		}
@@ -188,15 +236,17 @@ namespace Promises
 			if (_state == nullptr || *_state == Pending)
 			{
 				ILambda* auxilliaryLam = memory_pool->allocate<ResolvedLambda<T>>(handler);
-				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, auxilliaryLam, true);
+				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, auxilliaryLam);
 				_Promises.push_back(continuation);
 			}
 			else
 			{
-				continuation = memory_pool->allocate<Promise, ILambda*, State*>(lam, _state, true);
+				continuation = memory_pool->allocate<Promise, ILambda*, State*>(lam, _state);
 			}
 
 			_stateLock.unlock();
+
+			finisher.add_promise(continuation);
 
 			return continuation;
 		}
@@ -253,6 +303,7 @@ namespace Promises
 		ILambda* _settleHandle;
 		ILambda* _resolveHandle;
 		ILambda* _rejectHandle;
+		std::condition_variable _cv;
 		std::mutex _stateLock;
 		std::thread _th;
 		std::vector<Promise*> _Promises;
@@ -262,6 +313,8 @@ namespace Promises
 			_stateLock.lock();
 			_state = state;
 			_stateLock.unlock();
+
+			_cv.notify_all();
 
 			for (size_t i = 0; i < _Promises.size(); i++)
 			{
@@ -275,6 +328,8 @@ namespace Promises
 			_state = state;
 			_stateLock.unlock();
 
+			_cv.notify_all();
+
 			for (size_t i = 0; i < _Promises.size(); i++)
 			{
 				_Promises[i]->_settle(nullptr, _state);
@@ -284,6 +339,10 @@ namespace Promises
 		virtual void Join(void)
 		{
 			this->_th.join();
+			std::unique_lock<std::mutex> lk(this->_stateLock);
+
+			if(*_state == Pending)
+				this->_cv.wait(lk);
 		}
 
 		void _withSettleHandle(void)
@@ -453,6 +512,7 @@ namespace Promises
 
 		return prom;
 	}
+	
 
 	Promise* all(std::vector<Promise*> &promises)
 	{
@@ -518,7 +578,8 @@ namespace Promises
 			}
 		});
 
-		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l, true);
+		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l);
+		finisher.add_promise(continuation);
 
 		return continuation;
 	}
@@ -587,8 +648,27 @@ namespace Promises
 			}
 		});
 
-		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l, true);
+		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l);
+		finisher.add_promise(continuation);
+
 		return continuation;
+	}
+
+
+	//await - suspend execution until the given promise is settled.
+	//If promise failed, the reject reason is thrown.
+	template <typename T>
+	T* await(IPromise* prom) {
+		prom->Join();
+		std::cout << "in await" << std::endl;
+		State* s = prom->getState();
+
+		if (*s == Rejected) {
+			throw s->getReason();
+		}
+
+		T* value = (T*)s->getValue();
+		return value;
 	}
 
 } // namespace Promises
@@ -596,7 +676,14 @@ namespace Promises
 Promises::Promise* promise(std::function<void(Promises::Settlement)> func)
 {
 	Promises::SettlementLambda *l = Promises::memory_pool->allocate<Promises::SettlementLambda, std::function<void(Promises::Settlement)>>(func);
-	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda*>(l, true);
+	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda*>(l);
+
+	Promises::finisher.add_promise(prom);
+
+	if (!Promises::exit_handle_created) {
+		std::atexit(Promises::fin);
+		Promises::exit_handle_created = true;
+	}
 
 	return prom;
 }
