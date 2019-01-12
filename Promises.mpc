@@ -3,7 +3,7 @@ project (Promises) {
     install = .
 
     specific(make) {
-        compile_flags += -std=c++11
+        compile_flags += -g -std=c++11
     }
 
     Header_Files {

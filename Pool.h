@@ -20,7 +20,7 @@ namespace Promises {
 		~Pool(void);
 
 		template<typename T>
-		T* allocate(bool joinable = false)
+		T* allocate()
 		{
 			this->_mem_lock.lock();
 
@@ -28,16 +28,13 @@ namespace Promises {
 			T* mem = (T*)temp;
 			new (mem) T();
 
-			if (joinable)
-				this->_promises.push_back(mem);
-
 			this->_mem_lock.unlock();
 
 			return mem;
 		}
 
 		template<typename T, typename IN1>
-		T* allocate(IN1 arg1, bool joinable = false)
+		T* allocate(IN1 arg1)
 		{
 			this->_mem_lock.lock();
 
@@ -45,25 +42,19 @@ namespace Promises {
 			T* mem = (T*)temp;
 			new (mem) T(arg1);
 
-			if (joinable)
-				this->_promises.push_back(mem);
-
 			this->_mem_lock.unlock();
 
 			return mem;
 		}
 
 		template<typename T, typename IN1, typename IN2>
-		T* allocate(IN1 arg1, IN2 arg2, bool joinable = false)
+		T* allocate(IN1 arg1, IN2 arg2)
 		{
 			this->_mem_lock.lock();
 
 			void* temp = alloc_mem(_memory, sizeof(T));
 			T* mem = (T*)temp;
 			new (mem) T(arg1, arg2);
-
-			if (joinable)
-				this->_promises.push_back(mem);
 
 			this->_mem_lock.unlock();
 
@@ -84,7 +75,6 @@ namespace Promises {
 		static bool _is_created;
 		static Pool* _pool;
 		std::mutex _mem_lock;
-		std::vector<void*> _promises;
 
 	};
 

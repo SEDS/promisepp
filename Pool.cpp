@@ -17,19 +17,13 @@ namespace Promises {
 
     //user should not need to pass memory pool around
     Pool::Pool(const Pool& p)
-        :_memory(p._memory),
-        _promises(p._promises)
+        :_memory(p._memory)
     {
         //do nothing
     }
 
     Pool::~Pool(void)
     {
-        for (size_t i = 0; i < _promises.size(); i++)
-		{
-			((IPromise*)_promises[i])->Join();
-		}
-
         if (_memory != NULL || _memory != nullptr)
         {
             free_pool(_memory);
@@ -62,7 +56,6 @@ namespace Promises {
             return *this;
         
         this->_memory = p._memory;
-        this->_promises = p._promises;
 
         return *this;
     }
