@@ -20,10 +20,17 @@ int main(void)
 	});
 
 	//starts new chain
-	my_prom->then<std::string>([&](std::string value) {
+	auto another_prom = my_prom->then<std::string>([&](std::string value) {
 		std::cout << "The value is still " << value << std::endl;
 		return Promises::Resolve<std::string>("yes new chain");
 	});
 
-	std::exit(0);
+	try {
+		auto value = Promises::await<std::string>(another_prom);
+		std::cout << *value << std::endl;
+	} catch(std::exception &ex) {
+		std::cout << "main failure:" << ex.what() << std::endl;
+	}
+
+	return 0;
 }

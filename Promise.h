@@ -338,11 +338,14 @@ namespace Promises
 
 		virtual void Join(void)
 		{
-			this->_th.join();
 			std::unique_lock<std::mutex> lk(this->_stateLock);
 
-			if(*_state == Pending)
+			//wait for promise to have state.
+			if(_state == nullptr || *_state == Pending)
 				this->_cv.wait(lk);
+
+			if (this->_th.joinable())
+				this->_th.join();
 		}
 
 		void _withSettleHandle(void)
@@ -660,7 +663,6 @@ namespace Promises
 	template <typename T>
 	T* await(IPromise* prom) {
 		prom->Join();
-		std::cout << "in await" << std::endl;
 		State* s = prom->getState();
 
 		if (*s == Rejected) {
