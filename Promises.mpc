@@ -2,21 +2,19 @@ project (Promises) {
     exename = Promises
     install = .
 
+    libs += lboost_unit_test_framework
+    after += lboost_unit_test_framework
+
     specific(make) {
         compile_flags += -g -std=c++11
     }
 
-    Header_Files {
-        IPromise.h
+    Template_Files {
         Promise.h
         State.h
-        Pool.h
-        Slab_Allocator.h
     }
 
     Source_Files {
-        Slab_Allocator.cpp
-        Pool.cpp
         source.cpp
     }
 

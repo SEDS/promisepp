@@ -1,0 +1,18 @@
+project (Tests) {
+    exename = Tests
+    install = .
+
+    specific(make) {
+        compile_flags += -g -std=c++11
+    }
+
+    Template_Files {
+        Promise.h
+        State.h
+    }
+
+    Source_Files {
+        source.cpp
+    }
+
+}
