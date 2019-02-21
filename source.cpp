@@ -1,9 +1,11 @@
 #include "State.h"
 #include <iostream>
-#include <string>
+#include <cstring>
 
 int main(void) {
-	
+
+	std::logic_error s1("nyalia");
+	std::cout << strcmp(s1.what(), std::logic_error("nyalia").what()) << std::endl;
 	// bool got_new_car = true;
 
 	// auto my_prom = promise([&](Promises::Settlement settle) {

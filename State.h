@@ -1,4 +1,5 @@
-#include <stdexcept>
+#include "Promise_Error.h"
+#include <iostream>
 
 #ifndef STATE_H
 #define STATE_H
@@ -10,6 +11,8 @@ namespace Promises {
 		Resolved,
 		Rejected
 	};
+
+    static std::logic_error noerr("NOERR");
 
 	class State
 	{
@@ -34,18 +37,24 @@ namespace Promises {
 
 		virtual ~State(void) {}
 
-		bool operator==(Status stat)
-		{
+		bool operator == (const Status stat) {
 			return this->_status == stat;
 		}
 
-		bool operator!=(Status stat)
-		{
+		bool operator != (const Status stat) {
 			return this->_status != stat;
 		}
 
-		virtual void *getValue(void) = 0;
-		virtual std::exception getReason(void) = 0;
+        bool operator == (const State &state) {
+            return this->operator==(state._status);
+        }
+
+        bool operator != (const State &state) {
+            return this->operator!=(state._status);
+        }
+
+		virtual void* getValue(void) = 0;
+		virtual std::exception& getReason(void) = 0;
 
 	private:
 		Status _status;
@@ -55,12 +64,6 @@ namespace Promises {
 	class ResolvedState : public State
 	{
 	public:
-		ResolvedState(void)
-			: _value(nullptr)
-		{
-			//do nothing
-		}
-
 		ResolvedState(T *v)
 			: State(Resolved),
 			_value(v)
@@ -70,7 +73,7 @@ namespace Promises {
 
 		ResolvedState(const ResolvedState<T> &state)
 			: State(state),
-			_value(state._value)
+			_value(new T(*state._value))
 		{
 			//do nothing
 		}
@@ -80,12 +83,22 @@ namespace Promises {
 			delete _value;
 		}
 
-		virtual void *getValue(void) {
+		virtual void* getValue(void) {
 			return _value;
 		}
-		virtual std::exception getReason(void) {
-			return std::logic_error("NO ERR");
+		virtual std::exception& getReason(void) {
+			return noerr;
 		}
+
+        bool operator == (const ResolvedState<T> &state) {
+            bool ret = (*_value == *state._value);
+            return ret;
+        }
+
+        bool operator != (const ResolvedState<T> &state) {
+            bool ret = (*_value != *state._value);
+            return ret;
+        }
 
 	private:
 		T *_value;
@@ -111,54 +124,65 @@ namespace Promises {
             //do nothing
 		}
 
-	private:
-		virtual void *getValue(void) {
+        virtual void* getValue(void) {
 			return nullptr;
 		}
-		virtual std::exception getReason(void) {
-			return std::logic_error("NO ERR");
+
+		virtual std::exception& getReason(void) {
+			return noerr;
 		}
+
+        bool operator == (const ResolvedState<void> &state) {
+            bool ret = (State::operator == (state));
+            return ret;
+        }
+
+        bool operator != (const ResolvedState<void> &state) {
+            bool ret = (State::operator != (state));
+            return ret;
+        }
 	};
 
 	class RejectedState : public State
 	{
 	public:
 		RejectedState(void)
-			: _reason(std::logic_error("NO ERR"))
-		{
-			//do nothing
-		}
+            :_reason(noerr)
+		{ }
 
-		RejectedState(std::exception e)
-			: State(Rejected),
-			_reason(e)
-		{
-			//do nothing
-		}
+		RejectedState(const std::exception &e)
+			:State(Rejected),
+            _reason(e.what())
+		{ }
 
 		RejectedState(const RejectedState &state)
-			: State(state),
+			:State(state),
 			_reason(state._reason)
-		{
-			//do nothing
-		}
+		{ }
 
 		virtual ~RejectedState(void)
-		{
-			//do nothing
-		}
+		{ }
 
-		virtual void *getValue(void)
-		{
+		virtual void* getValue(void) {
 			return nullptr;
 		}
-		virtual std::exception getReason(void)
-		{
+
+		virtual std::exception& getReason(void) {
 			return _reason;
 		}
 
+        bool operator == (const RejectedState &state) {
+            bool ret = (_reason == state._reason);
+            return ret;
+        }
+
+        bool operator != (const RejectedState &state) {
+            bool ret = (_reason != state._reason);
+            return ret;
+        }
+
 	private:
-		std::exception _reason;
+		Promise_Error _reason;
 	};
 
 }

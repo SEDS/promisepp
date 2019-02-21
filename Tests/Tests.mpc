@@ -2,17 +2,25 @@ project (Tests) {
     exename = Tests
     install = .
 
+    libs += boost_unit_test_framework
+    after += boost_unit_test_framework
+
     specific(make) {
         compile_flags += -g -std=c++11
     }
 
     Template_Files {
-        Promise.h
-        State.h
+        ../Promise.h
+        ../State.h
+    }
+
+    Header_Files {
+        ../Promise_Error.h
     }
 
     Source_Files {
-        source.cpp
+        Promise_Tests.cpp
+        State_Tests.cpp
     }
 
 }

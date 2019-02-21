@@ -2,9 +2,6 @@ project (Promises) {
     exename = Promises
     install = .
 
-    libs += lboost_unit_test_framework
-    after += lboost_unit_test_framework
-
     specific(make) {
         compile_flags += -g -std=c++11
     }
@@ -12,6 +9,10 @@ project (Promises) {
     Template_Files {
         Promise.h
         State.h
+    }
+
+    Header_Files {
+        Promise_Error.h
     }
 
     Source_Files {
