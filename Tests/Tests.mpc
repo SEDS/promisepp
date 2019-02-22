@@ -21,6 +21,7 @@ project (Tests) {
     Source_Files {
         Promise_Tests.cpp
         State_Tests.cpp
+        Exception_Tests.cpp
     }
 
 }
