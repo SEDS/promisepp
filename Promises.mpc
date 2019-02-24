@@ -6,16 +6,17 @@ project (Promises) {
         compile_flags += -g -std=c++11
     }
 
-    Template_Files {
+    Header_Files {
+        IPromise.h
         Promise.h
         State.h
-    }
-
-    Header_Files {
-        Promise_Error.h
+        Pool.h
+        Slab_Allocator.h
     }
 
     Source_Files {
+        Slab_Allocator.cpp
+        Pool.cpp
         source.cpp
     }
 
