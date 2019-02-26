@@ -21,12 +21,12 @@ int main(void)
 		std::cout << value;
 	});
 
-	try {
-		auto value = Promises::await<char>(another);
-		std::cout << *value << std::endl;
-	} catch(std::exception &ex) {
-		std::cout << "main failure:" << ex.what() << std::endl;
-	}
+	// try {
+		// auto value = Promises::await<char>(another);
+		// std::cout << *value << std::endl;
+	// } catch(std::exception &ex) {
+		// std::cout << "main failure:" << ex.what() << std::endl;
+	// }
 
 	return 0;
 }
