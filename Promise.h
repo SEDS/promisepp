@@ -94,7 +94,7 @@ namespace Promises
 		{
 			typedef typename lambda_if_not_void<LAMBDA>::type chain_type;
 			Chain<chain_type> chainer;
-			std::exception reason = stat->getReason();
+			std::exception reason = stat->get_reason();
 			IPromise* p = chainer.template chain<LAMBDA, std::exception>(_lam, reason);
 
 			return p;
@@ -124,7 +124,7 @@ namespace Promises
 			typedef typename lambda_if_not_void<LAMBDA>::type chain_type;
 			typedef typename lambda_traits<LAMBDA>::arg_type arg_type;
 			Chain<chain_type> chainer;
-			arg_type *value = (arg_type *)stat->getValue();
+			arg_type *value = (arg_type *)stat->get_value();
 			IPromise* p = chainer.template chain<LAMBDA, arg_type>(_lam, *value);
 
 			return p;
@@ -305,7 +305,7 @@ namespace Promises
 			return continuation;
 		}
 
-		virtual State* getState(void)
+		virtual State* get_state(void)
 		{
 			return this->_state;
 		}
@@ -418,7 +418,7 @@ namespace Promises
 			
 			//parent will only be nullptr on chain end
 			if(parent != nullptr) {
-				State* state = parent->getState();
+				State* state = parent->get_state();
 
 				//if the resolve handle succeeds, the the promise chain
 				//is stil continuing with successful runs
@@ -443,7 +443,7 @@ namespace Promises
 			
 			//parent will only be nullptr on chain end
 			if(parent != nullptr) {
-				State* state = parent->getState();
+				State* state = parent->get_state();
 
 				//if the resolve handle succeeds, the the promise chain
 				//is stil continuing with successful runs
@@ -734,16 +734,16 @@ namespace Promises
 	template <typename T>
 	T* await(IPromise* prom) {
 		prom->Join();
-		State* s = prom->getState();
+		State* s = prom->get_state();
 		
 		T* value = nullptr;
 
 		if (s != nullptr) {
 			if (*s == Rejected) {
-				throw s->getReason();
+				throw s->get_reason();
 			}
 
-			value = (T*)s->getValue();
+			value = (T*)s->get_value();
 		}
 		
 		return value;

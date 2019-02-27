@@ -1,0 +1,30 @@
+project (Tests) {
+    exename = Tests
+    install = .
+
+    libs += boost_unit_test_framework
+    after += boost_unit_test_framework
+
+    specific(make) {
+        compile_flags += -g -std=c++11
+    }
+
+    Template_Files {
+        ../State.h
+    }
+
+    Header_Files {
+        ../Promise_Error.h
+		../Pool.h
+        ../Slab_Allocator.h
+    }
+
+    Source_Files {
+		../Slab_Allocator.cpp
+        ../Pool.cpp
+        Promise_Tests.cpp
+        State_Tests.cpp
+        Exception_Tests.cpp
+    }
+
+}
