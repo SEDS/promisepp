@@ -2,8 +2,7 @@
 #include <iostream>
 #include <string>
 
-int main(void)
-{
+int main(void) {
 	bool got_new_car = true;
 
 	auto my_prom = promise([&got_new_car](Promises::Settlement settle) {
@@ -18,15 +17,15 @@ int main(void)
 		std::cout << "But does it have cup holders? ";
 		return Promises::Resolve('Y');
 	})->then([](char value) {
-		std::cout << value;
+		std::cout << value << std::endl;
 	});
 
-	// try {
-		// auto value = Promises::await<char>(another);
-		// std::cout << *value << std::endl;
-	// } catch(std::exception &ex) {
-		// std::cout << "main failure:" << ex.what() << std::endl;
-	// }
+	try {
+		auto value = Promises::await<void>(another);
+		std::cout << value << std::endl;
+	} catch(std::exception &ex) {
+		std::cout << "main failure:" << ex.what() << std::endl;
+	}
 
 	return 0;
 }

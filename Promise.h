@@ -56,55 +56,33 @@ namespace Promises
         typedef typename lambda_traits<LAMBDA>::result_type result_type;
         typedef typename enable_if<!std::is_same<result_type, void>::value, LAMBDA>::type type;
     };
+	
+	template<typename Continue>
+    struct Chain {
+
+        template<typename LAMBDA, typename T>
+        IPromise* chain (LAMBDA lam, T &value) {
+			IPromise* prom = lam(value);
+            return prom;
+        }
+    };
+
+    template<>
+    struct Chain <void> {
+
+        template<typename LAMBDA, typename T>
+        IPromise* chain (LAMBDA lam, T &value) {
+			lam(value);
+            return nullptr;
+        }
+    };
 
 	//init the memory pool as a unique ptr so it will be destructed once program terminates
 	static std::unique_ptr<Promises::Pool> memory_pool(Promises::Pool::Instance());
 
-	//Finisher - a class that safely destroys the environment and waits for all Promises to be fulfilled before termination.
-	class Finisher {
-		public:
-			explicit Finisher(void)
-			{
-				//nothing to do
-			}
-
-
-			void add_promise(IPromise* prom) {
-				_lock.lock();
-
-				_promises.push_back(prom);
-
-				_lock.unlock();
-			}
-
-			void finish (void) {
-				_lock.lock();
-
-				for(size_t i=0; i<_promises.size(); ++i) {
-					_promises[i]->Join();
-					// memory_pool->deallocate(_promises[i]);
-				}
-
-				_lock.unlock();
-			}
-
-		private:
-			std::mutex _lock;
-			std::vector<IPromise*> _promises;
-	};
-
-	static Finisher finisher;
-	static bool exit_handle_created = false;
-	
-	void fin(void) {
-		finisher.finish();
-	}
-
 	template<typename LAMBDA>
 	class RejectedLambda : public ILambda
 	{
-		typedef std::function<IPromise*(std::exception)> lambdatype;
-
 	public:
 		RejectedLambda(LAMBDA l)
 			: _lam(l)
@@ -114,8 +92,10 @@ namespace Promises
 
 		virtual IPromise* call(State* stat)
 		{
+			typedef typename lambda_if_not_void<LAMBDA>::type chain_type;
+			Chain<chain_type> chainer;
 			std::exception reason = stat->getReason();
-			IPromise* p = _lam(reason);
+			IPromise* p = chainer.template chain<LAMBDA, std::exception>(_lam, reason);
 
 			return p;
 		}
@@ -132,10 +112,8 @@ namespace Promises
 	template <typename LAMBDA>
 	class ResolvedLambda : public ILambda
 	{
-		typedef std::function<IPromise*(T)> lambdatype;
-
 	public:
-		ResolvedLambda(lambdatype l)
+		ResolvedLambda(LAMBDA l)
 			: _lam(l)
 		{
 			//do nothing
@@ -143,14 +121,17 @@ namespace Promises
 
 		virtual IPromise* call(State* stat)
 		{
-			T *value = (T *)stat->getValue();
-			IPromise* p = _lam(*value);
+			typedef typename lambda_if_not_void<LAMBDA>::type chain_type;
+			typedef typename lambda_traits<LAMBDA>::arg_type arg_type;
+			Chain<chain_type> chainer;
+			arg_type *value = (arg_type *)stat->getValue();
+			IPromise* p = chainer.template chain<LAMBDA, arg_type>(_lam, *value);
 
 			return p;
 		}
 
 	private:
-		lambdatype _lam;
+		LAMBDA _lam;
 
 		virtual void call(IPromise* prom)
 		{
@@ -213,19 +194,16 @@ namespace Promises
 				delete _rejectHandle;
 		}
 
-		template <typename T>
-		Promise* then(std::function<Promise*(T)> resolver, std::function<Promise*(std::exception)> rejecter = nullptr)
+		template <typename RESLAM, typename REJLAM>
+		Promise* then(RESLAM resolver, REJLAM rejecter)
 		{
 			Promise* continuation = nullptr;
 			ILambda* reslam = nullptr;
 			ILambda* rejlam = nullptr;
 
 			//this check is necessary so the proper nullptr's are passed into continuation promise
-			if (resolver != nullptr)
-				reslam = memory_pool->allocate<ResolvedLambda<T>>(resolver);
-
-			if (rejecter != nullptr)
-				rejlam = memory_pool->allocate<RejectedLambda>(rejecter);
+			reslam = memory_pool->allocate<ResolvedLambda<RESLAM>>(resolver);
+			rejlam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
 
 			_stateLock.lock();
 
@@ -245,28 +223,76 @@ namespace Promises
 
 			_stateLock.unlock();
 
-			finisher.add_promise(continuation);
-
 			return continuation;
 		}
-
-		Promise* _catch(std::function<Promise*(std::exception)> rejecter)
-		{
-			return then<char>(nullptr, rejecter);
-		}
-
-		template <typename T>
-		Promise* finally(std::function<Promise*(T)> handler)
+		
+		template <typename LAMBDA>
+		Promise* then(LAMBDA handler)
 		{
 			Promise* continuation = nullptr;
-			ILambda* lam = memory_pool->allocate<ResolvedLambda<T>>(handler);
+			ILambda* lam = nullptr;
+			
+			//this check is necessary so the proper nullptr's are passed into continuation promise
+			lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(handler);
 
 			_stateLock.lock();
 
 			if (_state == nullptr || *_state == Pending)
 			{
-				ILambda* auxilliaryLam = memory_pool->allocate<ResolvedLambda<T>>(handler);
-				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, auxilliaryLam);
+				ILambda* fake = nullptr;
+				continuation = memory_pool->allocate<Promise>(lam, fake);
+				_Promises.push_back(continuation);
+			}
+			else if (*_state == Resolved)
+			{
+				continuation = memory_pool->allocate<Promise>(lam, this->_state);
+			}
+
+			_stateLock.unlock();
+
+			return continuation;
+		}
+		
+		Promise* then(ILambda *lam)
+		{
+			Promise* continuation = nullptr;
+						
+			_stateLock.lock();
+			if (_state == nullptr || *_state == Pending)
+			{
+				ILambda* fake = nullptr;
+				continuation = memory_pool->allocate<Promise>(lam, fake);
+				_Promises.push_back(continuation);
+			}
+			else if (*_state == Resolved)
+			{
+				continuation = memory_pool->allocate<Promise>(lam, this->_state);
+			}
+
+			_stateLock.unlock();
+
+			return continuation;
+		}
+	
+		template<typename REJLAM>
+		Promise* _catch(REJLAM rejecter)
+		{
+			ILambda* rejlam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
+			return then(rejlam);
+		}
+
+		template <typename LAMBDA>
+		Promise* finally(LAMBDA handler)
+		{
+			Promise* continuation = nullptr;
+			ILambda* lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(handler);
+
+			_stateLock.lock();
+
+			if (_state == nullptr || *_state == Pending)
+			{
+				ILambda* auxlam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(handler);
+				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, auxlam);
 				_Promises.push_back(continuation);
 			}
 			else
@@ -275,8 +301,6 @@ namespace Promises
 			}
 
 			_stateLock.unlock();
-
-			finisher.add_promise(continuation);
 
 			return continuation;
 		}
@@ -391,14 +415,24 @@ namespace Promises
 			//we need 2 seperate functions between this and _withRejectHandle
 			//because we need to call two different
 			IPromise* parent = _resolveHandle->call(input);
-			State* stat = parent->getState();
+			
+			//parent will only be nullptr on chain end
+			if(parent != nullptr) {
+				State* state = parent->getState();
 
-			//if the resolve handle succeeds, the the promise chain
-			//is stil continuing with successful runs
-			if (*stat == Resolved)
-				_resolve(stat);
-			else
-				_reject(stat);
+				//if the resolve handle succeeds, the the promise chain
+				//is stil continuing with successful runs
+				if (*state == Resolved)
+					_resolve(state);
+				else
+					_reject(state);
+			} else {
+				_stateLock.lock();
+				_state = nullptr;
+				_stateLock.unlock();
+
+				_cv.notify_all();
+			}
 		}
 
 		void _withRejectHandle(State* input)
@@ -406,14 +440,24 @@ namespace Promises
 			//surroung this in a try block
 			//so if an exception happens, then the promise is rejected instead.
 			IPromise* parent = _rejectHandle->call(input);
-			State* stat = parent->getState();
+			
+			//parent will only be nullptr on chain end
+			if(parent != nullptr) {
+				State* state = parent->getState();
 
-			//if the reject handle succeeds, then the promise chain
-			//has been recovered and resolved
-			if (*stat == Resolved)
-				_resolve(stat);
-			else
-				_reject(stat);
+				//if the resolve handle succeeds, the the promise chain
+				//is stil continuing with successful runs
+				if (*state == Resolved)
+					_resolve(state);
+				else
+					_reject(state);
+			} else {
+				_stateLock.lock();
+				_state = nullptr;
+				_stateLock.unlock();
+
+				_cv.notify_all();
+			}
 		}
 
 		void _settle(void)
@@ -501,10 +545,11 @@ namespace Promises
 		IPromise *_prom;
 	};
 
+	template<typename LAMBDA>
 	class SettlementLambda : public ILambda
 	{
 	public:
-		SettlementLambda(std::function<void(Settlement)> l)
+		SettlementLambda(LAMBDA l)
 			: _lam(l)
 		{
 			//do nothing
@@ -517,7 +562,7 @@ namespace Promises
 		}
 
 	private:
-		std::function<void(Settlement)> _lam;
+		LAMBDA _lam;
 
 		virtual IPromise* call(State* stat)
 		{
@@ -546,6 +591,12 @@ namespace Promises
 		return prom;
 	}
 	
+	template<typename LAMBDA>
+	SettlementLambda<LAMBDA>* create_settlement_lambda(LAMBDA handler) {
+		SettlementLambda<LAMBDA>* lam = nullptr;
+		lam = memory_pool->allocate<SettlementLambda<LAMBDA>>(handler);
+		return lam;
+	}
 
 	Promise* all(std::vector<Promise*> &promises)
 	{
@@ -555,7 +606,7 @@ namespace Promises
 		//create the continuation promise as a user defined promise
 		//and begin going through the given list of promises
 
-		SettlementLambda* l = memory_pool->allocate<SettlementLambda>([&](Settlement settle) {
+		ILambda* l = create_settlement_lambda([&](Settlement settle) {
 			//create the list for results and an
 			//exceptin for rejected reason
 			std::vector<int> results;
@@ -568,31 +619,23 @@ namespace Promises
 			//not before the return statement.
 			std::mutex checkLock;
 
-			//create resolve and reject handles for the list
-			auto res = [&](int value) {
-				std::unique_lock<std::mutex> reslock(checkLock);
-
-				if (statflag == Pending)
-					results.push_back(value);
-
-				return Promises::Resolve<bool>(true);
-			};
-
-			auto rej = [&](std::exception e) {
-				std::unique_lock<std::mutex> rejlock(checkLock);
-
-				if (statflag == Pending)
-				{
-					reason = e;
-					statflag = Rejected;
-				}
-
-				return Promises::Reject(e);
-			};
-
 			//loop through the promises
-			for (int i = 0; i < promises.size(); ++i)
-				promises[i]->then<int>(res, rej);
+			for (int i = 0; i < promises.size(); ++i) {
+				promises[i]->then([&](int value) -> void {
+					std::unique_lock<std::mutex> reslock(checkLock);
+
+					if (statflag == Pending)
+						results.push_back(value);
+				}, [&](std::exception e) -> void {
+					std::unique_lock<std::mutex> rejlock(checkLock);
+
+					if (statflag == Pending)
+					{
+						reason = e;
+						statflag = Rejected;
+					}
+				});
+			}
 
 			while (statflag == Pending)
 			{
@@ -611,8 +654,7 @@ namespace Promises
 			}
 		});
 
-		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l);
-		finisher.add_promise(continuation);
+		continuation = memory_pool->allocate<Promise, ILambda*>(l);
 
 		return continuation;
 	}
@@ -625,7 +667,7 @@ namespace Promises
 		//create the continuation promise as a user defined promise
 		//and begin going through the given list of promises
 
-		SettlementLambda* l = memory_pool->allocate<SettlementLambda>([&](Settlement settle) {
+		ILambda* l = create_settlement_lambda([&](Settlement settle) {
 			//create the map for results and an
 			//exceptin for rejected reason
 			std::map<std::string, int> results;
@@ -644,14 +686,14 @@ namespace Promises
 			//loop through the promises
 			for (auto it = promises.begin(); it != promises.end(); it++)
 			{
-				it->second->then<int>([&](int value) {
+				it->second->then([&](int value) -> void {
 
 					std::unique_lock<std::mutex> reslock(checkLock);
 
 					if (statflag == Pending)
 						results.insert(std::pair<std::string, int>(it->first, value));
 
-					return Promises::Resolve<bool>(true); }, [&](std::exception e) {
+					}, [&](std::exception e) -> void {
 
 						std::unique_lock<std::mutex> rejlock(checkLock);
 
@@ -661,7 +703,7 @@ namespace Promises
 							statflag = Rejected;
 						}
 
-						return Promises::Reject(e); });
+						});
 			}
 
 			while (statflag == Pending)
@@ -681,8 +723,7 @@ namespace Promises
 			}
 		});
 
-		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l);
-		finisher.add_promise(continuation);
+		continuation = memory_pool->allocate<Promise, ILambda*>(l);
 
 		return continuation;
 	}
@@ -694,28 +735,26 @@ namespace Promises
 	T* await(IPromise* prom) {
 		prom->Join();
 		State* s = prom->getState();
+		
+		T* value = nullptr;
 
-		if (*s == Rejected) {
-			throw s->getReason();
+		if (s != nullptr) {
+			if (*s == Rejected) {
+				throw s->getReason();
+			}
+
+			value = (T*)s->getValue();
 		}
-
-		T* value = (T*)s->getValue();
+		
 		return value;
 	}
 
 } // namespace Promises
 
-Promises::Promise* promise(std::function<void(Promises::Settlement)> func)
-{
-	Promises::SettlementLambda *l = Promises::memory_pool->allocate<Promises::SettlementLambda, std::function<void(Promises::Settlement)>>(func);
-	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda*>(l);
-
-	Promises::finisher.add_promise(prom);
-
-	if (!Promises::exit_handle_created) {
-		std::atexit(Promises::fin);
-		Promises::exit_handle_created = true;
-	}
+template<typename LAMBDA>
+Promises::Promise* promise(LAMBDA handle) {
+	Promises::SettlementLambda<LAMBDA> *l = Promises::create_settlement_lambda<LAMBDA>(handle);
+	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda<LAMBDA>*>(l);
 
 	return prom;
 }
