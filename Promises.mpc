@@ -11,12 +11,11 @@ project (Promises) {
 		Pool.h
         Slab_Allocator.h
 		Promise_Error.h
-    }
-	
-	Template_Files {
 		Promise.h
         State.h
-	}
+		Settlement.h
+		Lambda.h
+    }
 
     Source_Files {
         Slab_Allocator.cpp
