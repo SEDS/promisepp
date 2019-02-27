@@ -26,23 +26,25 @@ namespace Promises {
 			//do nothing
 		}
 
-		~Settlement(void)
-		{
+		~Settlement(void) {
 			//does nothing
 		}
 
 		template <typename T>
-		void resolve(T v)
-		{
+		void resolve(T v) {
 			T *value = memory_pool->allocate<T>();
 			*value = v;
 			State* state = memory_pool->allocate<ResolvedState<T>, T*>(value);
 			_prom->_resolve(state);
 		}
 
-		void reject(std::exception e)
-		{
-			State* state = memory_pool->allocate<RejectedState, std::exception>(e);
+		void reject(const std::exception &e) {
+			State* state = memory_pool->allocate<RejectedState, const std::exception&>(e);
+			_prom->_reject(state);
+		}
+		
+		void reject(const std::string &msg) {
+			State* state = memory_pool->allocate<RejectedState, const std::string&>(msg);
 			_prom->_reject(state);
 		}
 

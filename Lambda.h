@@ -68,9 +68,13 @@ namespace Promises {
 		{ }
 
 		virtual IPromise* call(State* stat) {
+			if (stat == NULL | stat == nullptr) {
+				throw std::logic_error("RejectedLambda.call(): state is null");
+			}
+			
 			typedef typename lambda_if_not_void<LAMBDA>::type chain_type;
 			Chain<chain_type> chainer;
-			std::exception reason = stat->get_reason();
+			std::exception& reason = stat->get_reason();
 			IPromise* p = chainer.template chain<LAMBDA, std::exception>(_lam, reason);
 
 			return p;
@@ -90,6 +94,10 @@ namespace Promises {
 		{ }
 
 		virtual IPromise* call(State* stat) {
+			if (stat == NULL | stat == nullptr) {
+				throw std::logic_error("ResolvedLambda.call(): state is null");
+			}
+			
 			typedef typename lambda_if_not_void<LAMBDA>::type chain_type;
 			typedef typename lambda_traits<LAMBDA>::arg_type arg_type;
 			Chain<chain_type> chainer;
@@ -104,6 +112,18 @@ namespace Promises {
 
 		virtual void call(IPromise* prom) { }
 	};
+}
+
+template<typename LAMBDA>
+Promises::RejectedLambda<LAMBDA>* rejected_lambda(LAMBDA lam) {
+	Promises::RejectedLambda<LAMBDA>* rejlam = new Promises::RejectedLambda<LAMBDA>(lam);
+	return rejlam;
+}
+
+template<typename LAMBDA>
+Promises::ResolvedLambda<LAMBDA>* resolved_lambda(LAMBDA lam) {
+	Promises::ResolvedLambda<LAMBDA>* reslam = new Promises::ResolvedLambda<LAMBDA>(lam);
+	return reslam;
 }
 
 #endif // !LAMBDA_H

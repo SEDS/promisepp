@@ -26,6 +26,7 @@ project (Tests) {
         Promise_Tests.cpp
         State_Tests.cpp
         Exception_Tests.cpp
+		Lambda_Tests.cpp
     }
 
 }
