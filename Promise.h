@@ -2,9 +2,9 @@
 #define PROMISE_H
 
 #include "IPromise.h"
-#include "Settlement.h"
 #include "Lambda.h"
 #include "Pool.h"
+#include "State.h"
 #include <functional>
 #include <stdexcept>
 #include <thread>
@@ -22,6 +22,82 @@
 namespace Promises {
 
 	static int _promiseID = 0;
+
+	//init the memory pool as a unique ptr so it will be destructed once program terminates
+	static std::unique_ptr<Promises::Pool> memory_pool(Promises::Pool::Instance());
+
+	class Settlement {
+	public:
+		Settlement(IPromise* p)
+			: _prom(p)
+		{ }
+
+		Settlement(const Settlement &settle)
+			: _prom(settle._prom)
+		{ }
+
+		~Settlement(void) { }
+
+		template <typename T>
+		void resolve(T v) {
+			if (_prom == NULL || _prom == nullptr) {
+				throw Promise_Error("Settlement.resolve(): internal promise is null");
+			}
+
+			T *value = memory_pool->allocate<T>();
+			*value = v;
+			State* state = memory_pool->allocate<ResolvedState<T>, T*>(value);
+			_prom->_resolve(state);
+		}
+
+		void reject(const std::exception &e) {
+			if (_prom == NULL || _prom == nullptr) {
+				throw Promise_Error("Settlement.reject(): internal promise is null");
+			}
+
+			State* state = memory_pool->allocate<RejectedState, const std::exception&>(e);
+			_prom->_reject(state);
+		}
+		
+		void reject(const std::string &msg) {
+			if (_prom == NULL || _prom == nullptr) {
+				throw Promise_Error("Settlement.reject(): internal promise is null");
+			}
+
+			State* state = memory_pool->allocate<RejectedState, const std::string&>(msg);
+			_prom->_reject(state);
+		}
+
+	private:
+		IPromise *_prom;
+	};
+
+	template<typename LAMBDA>
+	class SettlementLambda : public ILambda {
+	public:
+		SettlementLambda(LAMBDA l)
+			: _lam(l)
+		{ }
+
+		virtual void call(IPromise *prom) {
+			Settlement sett(prom);
+			_lam(sett);
+		}
+
+	private:
+		LAMBDA _lam;
+
+		virtual IPromise* call(State* stat) {
+			return nullptr;
+		}
+	};
+	
+	template<typename LAMBDA>
+	SettlementLambda<LAMBDA>* create_settlement_lambda(LAMBDA handler) {
+		SettlementLambda<LAMBDA>* lam = nullptr;
+		lam = memory_pool->allocate<SettlementLambda<LAMBDA>>(handler);
+		return lam;
+	}
 
 	class Promise : public IPromise {
 	
@@ -65,19 +141,14 @@ namespace Promises {
 				//a thrown exception can stop the de-allocation
 				//of further memory.
 			}
-
-			if (_settleHandle != nullptr)
-				delete _settleHandle;
-
-			if (_resolveHandle != nullptr)
-				delete _resolveHandle;
-
-			if (_rejectHandle != nullptr)
-				delete _rejectHandle;
 		}
 
 		template <typename RESLAM, typename REJLAM>
 		Promise* then(RESLAM resolver, REJLAM rejecter) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.then(): state is null");
+			}
+
 			Promise* continuation = nullptr;
 			ILambda* reslam = nullptr;
 			ILambda* rejlam = nullptr;
@@ -104,6 +175,10 @@ namespace Promises {
 		
 		template <typename LAMBDA>
 		Promise* then(LAMBDA handler) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.then(): state is null");
+			}
+
 			Promise* continuation = nullptr;
 			ILambda* lam = nullptr;
 			
@@ -126,6 +201,14 @@ namespace Promises {
 		}
 		
 		Promise* then(ILambda *lam) {
+			if (lam == NULL || lam == nullptr) {
+				throw Promise_Error("Promise.then(): lambda is null");
+			}
+
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.then(): state is null");
+			}
+
 			Promise* continuation = nullptr;
 						
 			_stateLock.lock();
@@ -144,12 +227,20 @@ namespace Promises {
 	
 		template<typename REJLAM>
 		Promise* _catch(REJLAM rejecter) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.catch(): state is null");
+			}
+
 			ILambda* rejlam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
 			return then(rejlam);
 		}
 
 		template <typename LAMBDA>
 		Promise* finally(LAMBDA handler) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.finally(): state is null");
+			}
+
 			Promise* continuation = nullptr;
 			ILambda* lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(handler);
 

@@ -1,7 +1,152 @@
 #define BOOST_TEST_MODULE PROMISEPP
 #define BOOST_TEST_DYN_LINK
 #include <boost/test/unit_test.hpp>
+#include "../Promise.h"
 
 BOOST_AUTO_TEST_SUITE(PROMISE_SUITE)
+
+BOOST_AUTO_TEST_CASE(Promise_Settlement_Constructor_Test) {
+    Promises::Settlement settlement(nullptr);
+
+    try {
+        settlement.resolve<int>(10);
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "Settlement.resolve(): internal promise is null") == 0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(Settlement_Copy_Constructor_Test) {
+    Promises::Settlement settlement(nullptr);
+    Promises::Settlement copy_settlement(settlement);
+
+    try {
+        copy_settlement.resolve<int>(10);
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "Settlement.resolve(): internal promise is null") == 0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(SettlmentLambda_Test) {
+    Promises::ILambda* lam = Promises::create_settlement_lambda([](Promises::Settlement settle) {
+        //success when control enters this scope
+        BOOST_CHECK(true);
+    });
+
+    Promises::IPromise* prom = nullptr;
+    lam->call(prom);
+}
+
+BOOST_AUTO_TEST_CASE(Promise_Default_Constructor_Test) {
+    Promises::Promise prom;
+    BOOST_CHECK(prom.get_state() == nullptr);
+
+    try {
+        prom.then([](int num) {}, [](std::exception &ex) {});
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "Promise.then(): state is null") == 0);
+    }
+
+    try {
+        prom.then([](int num) {});
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "Promise.then(): state is null") == 0);
+    }
+
+    try {
+        Promises::ILambda* lam = resolved_lambda([](int num){ });
+        prom.then(lam);
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "Promise.then(): state is null") == 0);
+    }
+
+    try {
+        prom._catch([](std::exception &ex) {});
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "Promise.catch(): state is null") == 0);
+    }
+
+    try {
+        prom.finally([](int num) {});
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "Promise.finally(): state is null") == 0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(Settlement_Resolve_Test) {
+    Promises::Promise prom;
+    Promises::Settlement settlement(&prom);
+
+    settlement.resolve<int>(10);
+    
+    Promises::State* state = prom.get_state();
+    BOOST_CHECK((*(int*)state->get_value()) == 10);
+}
+
+BOOST_AUTO_TEST_CASE(Settlement_Reject_Test) {
+    Promises::Promise prom;
+    Promises::Settlement settlement(&prom);
+
+    settlement.reject(std::logic_error("test"));
+    
+    Promises::State* state = prom.get_state();
+    BOOST_CHECK(strcmp(state->get_reason().what(), "test") == 0);
+}
+
+BOOST_AUTO_TEST_CASE(Promise_SettlementLambda_Constructor_Test) {
+    Promises::ILambda* lam = Promises::create_settlement_lambda([](Promises::Settlement settle) {
+        //success if control enters this scope
+        BOOST_CHECK(true);
+    });
+
+    Promises::Promise* prom = new Promises::Promise(lam);
+    
+    //promise destructor joins on thread
+    delete prom;
+}
+
+BOOST_AUTO_TEST_CASE(Await_Test) {
+    Promises::ILambda* lam = Promises::create_settlement_lambda([](Promises::Settlement settle) {
+        settle.resolve<int>(10);
+    });
+
+    Promises::Promise* prom = new Promises::Promise(lam);
+    int* v = Promises::await<int>(prom);
+    BOOST_CHECK(*v == 10);
+
+    delete prom;
+    
+}
+
+BOOST_AUTO_TEST_CASE(Promise_Factory_Method_Test) {
+    Promises::Promise* prom = promise([](Promises::Settlement settle) {
+        settle.resolve<int>(10);
+    });
+
+    int* v = Promises::await<int>(prom);
+    BOOST_CHECK(*v == 10);
+}
+
+// BOOST_AUTO_TEST_CASE(Double_Lambda_Then_Test) {
+//     Promises::Promise* prom1 = promise([](Promises::Settlement settle) {
+//         settle.resolve<int>(10);
+//     });
+
+//     //tests the resolve handle
+//     auto t1 = prom1->then([](int value) {
+//         BOOST_CHECK(value == 10);
+//     }, [](std::exception &ex){});
+
+//     Promises::Promise* prom2 = promise([](Promises::Settlement settle) {
+//         settle.reject(std::logic_error("test"));
+//     });
+
+//     //tests the reject handle
+//     auto t2 = prom2->then([](int value) { }, [](std::exception &ex){
+//         BOOST_CHECK(strcmp(ex.what(), "test") == 0);
+//     });
+
+//     Promises::await<int>(t1);
+//     Promises::await<int>(t2);
+// }
 
 BOOST_AUTO_TEST_SUITE_END()

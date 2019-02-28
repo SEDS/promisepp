@@ -2,12 +2,8 @@
 #define IPROMISE_H
 
 #include "State.h"
-#include "Pool.h"
-#include <memory>
 
 namespace Promises {
-	//init the memory pool as a unique ptr so it will be destructed once program terminates
-	static std::unique_ptr<Promises::Pool> memory_pool(Promises::Pool::Instance());
 	
     class IPromise {
 

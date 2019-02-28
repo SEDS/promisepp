@@ -16,7 +16,6 @@ project (Tests) {
 		../Promise_Error.h
 		../Promise.h
         ../State.h
-		../Settlement.h
 		../Lambda.h
     }
 
