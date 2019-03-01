@@ -138,6 +138,42 @@ namespace Promises {
 		lam = memory_pool->allocate<SettlementLambda<LAMBDA>>(handler);
 		return lam;
 	}
+	
+	class Semaphore {
+		public:
+			Semaphore(void)
+				:_value(0)
+			{ }
+		
+			bool test_decrease(){
+				std::unique_lock<std::mutex> lock(_lock);
+				if(_value > 0) {
+					--_value;
+					return true;
+				}
+				return false;
+			}
+		
+			void decrease(void) {
+				std::unique_lock<std::mutex> lock(_lock);
+				
+				while(_value <= 0) {
+					_cond.wait(lock);
+				}
+				
+				--_value;
+			}
+			
+			void increase(void) {
+				std::unique_lock<std::mutex> lock(_lock);
+				++_value;
+				_cond.notify_one();
+			}
+		private:
+			size_t _value;
+			std::mutex _lock;
+			std::condition_variable _cond;
+	};
 
 	class Promise : public IPromise {
 	
@@ -342,7 +378,7 @@ namespace Promises {
 		ILambda* _settleHandle;
 		ILambda* _resolveHandle;
 		ILambda* _rejectHandle;
-		std::condition_variable _cv;
+		Semaphore _semp;
 		std::mutex _stateLock;
 		std::thread _th;
 		std::vector<Promise*> _Promises;
@@ -352,7 +388,7 @@ namespace Promises {
 			_state = state;
 			_stateLock.unlock();
 
-			_cv.notify_all();
+			_semp.increase();
 
 			for (size_t i = 0; i < _Promises.size(); i++) {
 				_Promises[i]->_settle(_state, nullptr);
@@ -364,7 +400,7 @@ namespace Promises {
 			_state = state;
 			_stateLock.unlock();
 
-			_cv.notify_all();
+			_semp.increase();
 
 			for (size_t i = 0; i < _Promises.size(); i++) {
 				_Promises[i]->_settle(nullptr, _state);
@@ -372,14 +408,16 @@ namespace Promises {
 		}
 
 		virtual void Join(void) {
-			std::unique_lock<std::mutex> lk(this->_stateLock);
-
 			//wait for promise to have state.
-			if(_state == nullptr || *_state == Pending)
-				this->_cv.wait(lk);
+			if (_state == nullptr || *_state == Pending) {
+				if (!_semp.test_decrease()) {
+					_semp.decrease();
+				}
+			}
 
-			if (this->_th.joinable())
+			if (this->_th.joinable()) {
 				this->_th.join();
+			}
 		}
 
 		void _withSettleHandle(void) {
@@ -409,7 +447,7 @@ namespace Promises {
 				_state = nullptr;
 				_stateLock.unlock();
 
-				_cv.notify_all();
+				_semp.increase();
 			}
 		}
 
@@ -433,7 +471,7 @@ namespace Promises {
 				_state = nullptr;
 				_stateLock.unlock();
 
-				_cv.notify_all();
+				_semp.increase();
 			}
 		}
 
@@ -487,131 +525,7 @@ namespace Promises {
 
 		return prom;
 	}
-
-	Promise* all(std::vector<Promise*> &promises) {
-
-		Promise* continuation = nullptr;
-
-		//create the continuation promise as a user defined promise
-		//and begin going through the given list of promises
-
-		ILambda* l = create_settlement_lambda([&](Settlement settle) {
-			//create the list for results and an
-			//exceptin for rejected reason
-			std::vector<int> results;
-			std::exception reason;
-			Status statflag = Pending;
-
-			//lock for adding to list or creating the rejected reason
-			//using mutex instead of semaphore because we need
-			//ownership to be released when control exits scope
-			//not before the return statement.
-			std::mutex checkLock;
-
-			//loop through the promises
-			for (int i = 0; i < promises.size(); ++i) {
-				promises[i]->then([&](int value) -> void {
-					std::unique_lock<std::mutex> reslock(checkLock);
-
-					if (statflag == Pending)
-						results.push_back(value);
-				}, [&](std::exception e) -> void {
-					std::unique_lock<std::mutex> rejlock(checkLock);
-
-					if (statflag == Pending)
-					{
-						reason = e;
-						statflag = Rejected;
-					}
-				});
-			}
-
-			while (statflag == Pending) {
-				checkLock.lock();
-
-				if (results.size() >= promises.size()) {
-					settle.resolve<std::vector<int>>(results);
-					statflag = Resolved;
-				}
-
-				if (statflag == Rejected)
-					settle.reject(reason);
-
-				checkLock.unlock();
-			}
-		});
-
-		continuation = memory_pool->allocate<Promise, ILambda*>(l);
-
-		return continuation;
-	}
-
-	Promise* hash(std::map<std::string, Promises::Promise*> &promises) {
-
-		Promise* continuation = nullptr;
-
-		//create the continuation promise as a user defined promise
-		//and begin going through the given list of promises
-
-		ILambda* l = create_settlement_lambda([&](Settlement settle) {
-			//create the map for results and an
-			//exceptin for rejected reason
-			std::map<std::string, int> results;
-			std::exception reason;
-			Status statflag = Pending;
-
-			//still using our synchronization mechanisms because internally
-			//a map is a red-black tree, so the system can potentially
-			//look at same memory location to place a key-value pair.
-
-			//may not need synchronization methods actually because
-			//apparently all STL containers, such as a map, are required
-			//to be thread safe by C++ docs.
-			std::mutex checkLock;
-
-			//loop through the promises
-			for (auto it = promises.begin(); it != promises.end(); it++) {
-				it->second->then([&](int value) -> void {
-
-					std::unique_lock<std::mutex> reslock(checkLock);
-
-					if (statflag == Pending)
-						results.insert(std::pair<std::string, int>(it->first, value));
-
-					}, [&](std::exception e) -> void {
-
-						std::unique_lock<std::mutex> rejlock(checkLock);
-
-						if (statflag == Pending)
-						{
-							reason = e;
-							statflag = Rejected;
-						}
-
-						});
-			}
-
-			while (statflag == Pending) {
-				checkLock.lock();
-
-				if (results.size() >= promises.size()) {
-					settle.resolve<std::map<std::string, int>>(results);
-					statflag = Resolved;
-				}
-
-				if (statflag == Rejected)
-					settle.reject(reason);
-
-				checkLock.unlock();
-			}
-		});
-
-		continuation = memory_pool->allocate<Promise, ILambda*>(l);
-
-		return continuation;
-	}
-
-
+	
 	//await - suspend execution until the given promise is settled.
 	//If promise failed, the reject reason is thrown.
 	template <typename T>
@@ -631,6 +545,66 @@ namespace Promises {
 		return value;
 	}
 
+	Promise* all(std::vector<IPromise*> &promises) {
+
+		Promise* continuation = nullptr;
+
+		ILambda* lam = create_settlement_lambda([&promises](Settlement settle) {
+			//create the list for results
+			std::vector<int> results;
+
+			//loop through the promises
+			size_t i = 0;
+			for (i = 0; i < promises.size(); ++i) {
+				try {
+					int* value = await<int>(promises[i]);
+					results.push_back(*value);
+				} catch (const std::exception &ex) {
+					settle.reject(Promise_Error(ex.what()));
+					i = promises.size()+1;
+				}
+			}
+			
+			if (i < (promises.size()+1)) {
+				settle.resolve<std::vector<int>>(results);
+			}
+		});
+
+		continuation = memory_pool->allocate<Promise, ILambda*>(lam);
+
+		return continuation;
+	}
+
+	Promise* hash(std::map<std::string, Promises::IPromise*> &promises) {
+
+		Promise* continuation = nullptr;
+
+		ILambda* lam = create_settlement_lambda([&promises](Settlement settle) {
+			std::map<std::string, int> results;
+			bool early_termination = false;
+			
+			//loop through the promises
+			for (auto it = promises.begin(); it != promises.end(); it++) {
+				try {
+					int* value = await<int>(it->second);
+					results.insert(std::pair<std::string, int>(it->first, *value));
+				} catch (const std::exception &ex) {
+					settle.reject(Promise_Error(ex.what()));
+					it = promises.end();
+					it++;
+					early_termination = true;
+				}
+			}
+			
+			if (!early_termination) {
+				settle.resolve<std::map<std::string, int>>(results);
+			}
+		});
+
+		continuation = memory_pool->allocate<Promise, ILambda*>(lam);
+
+		return continuation;
+	}
 } // namespace Promises
 
 template<typename LAMBDA>

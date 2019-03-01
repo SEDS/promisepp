@@ -30,6 +30,13 @@ BOOST_AUTO_TEST_CASE(Copy_Constructor_Test) {
     BOOST_CHECK(strcmp(err.what(), copy.what()) == 0);
 }
 
+BOOST_AUTO_TEST_CASE(Assignment_Op_Test) {
+	Promises::Promise_Error err("nyalia");
+	Promises::Promise_Error copy = err;
+	
+	BOOST_CHECK(strcmp(err.what(), copy.what()) == 0);
+}
+
 BOOST_AUTO_TEST_CASE(Equality_Op_Test) {
     Promises::Promise_Error err(std::string("test"));
     Promises::Promise_Error ex(std::string("test"));;

@@ -32,6 +32,14 @@ namespace Promises {
 
             virtual ~Promise_Error(void)
             { }
+			
+			Promise_Error& operator = (const std::exception &err) {
+				if (this == &err) {
+					return (*this);
+				}
+				
+				_msg = err.what();
+			}
 
             bool operator == (const Promise_Error &err) {
                 return (_msg.compare(err._msg) == 0);

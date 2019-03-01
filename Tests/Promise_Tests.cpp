@@ -58,11 +58,11 @@ BOOST_AUTO_TEST_CASE(Promise_Default_Constructor_Test) {
         BOOST_CHECK(strcmp(ex.what(), "Promise.catch(): state is null") == 0);
     }
 
-    // try {
-    //     prom.finally([]() {});
-    // } catch (const std::exception &ex) {
-    //     BOOST_CHECK(strcmp(ex.what(), "Promise.finally(): state is null") == 0);
-    // }
+    try {
+        prom.finally([]() {});
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "Promise.finally(): state is null") == 0);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(Settlement_Resolve_Test) {
@@ -140,6 +140,8 @@ BOOST_AUTO_TEST_CASE(Double_Lambda_Then_Test) {
         BOOST_CHECK(value == 10);
     }, [](const std::exception &ex){});
 
+	Promises::await<int>(t1);
+	
     Promises::Promise* prom2 = promise([](Promises::Settlement settle) {
         settle.reject(std::logic_error("test"));
     });
@@ -210,18 +212,20 @@ BOOST_AUTO_TEST_CASE(Bubble_Reject_Test) {
 BOOST_AUTO_TEST_CASE(PreResolved_Test) {
     auto prom = Promises::Resolve<int>(10);
 
-    prom->then([](int num) {
+    auto t = prom->then([](int num) {
         BOOST_CHECK(num == 10);
     });
 
     auto v = Promises::await<int>(prom);
     BOOST_CHECK(*v == 10);
+	
+	Promises::await<int>(t);
 }
 
 BOOST_AUTO_TEST_CASE(PreRejected_Test) {
     auto prom = Promises::Reject(Promises::Promise_Error("IUPUI"));
 
-    prom->_catch([](const std::exception &ex) {
+    auto t = prom->_catch([](const std::exception &ex) {
         BOOST_CHECK(strcmp(ex.what(), "IUPUI") == 0);
     });
 
@@ -230,6 +234,8 @@ BOOST_AUTO_TEST_CASE(PreRejected_Test) {
     } catch (const std::exception &ex) {
         BOOST_CHECK(strcmp(ex.what(), "IUPUI") == 0);
     }
+	
+	Promises::await<int>(t);
 }
 
 BOOST_AUTO_TEST_CASE(Finally_Test) {
@@ -258,6 +264,64 @@ BOOST_AUTO_TEST_CASE(Finally_Test) {
     });
 
     Promises::await<int>(t2);
+}
+
+BOOST_AUTO_TEST_CASE(Promise_All_Test) {
+	std::vector<Promises::IPromise*> promises;
+	promises.push_back(Promises::Resolve<int>(10));
+	promises.push_back(promise([](Promises::Settlement settle) {
+		settle.resolve<int>(20);
+	}));
+	promises.push_back(promise([](Promises::Settlement settle) {
+		settle.resolve<int>(30);
+	}));
+	
+	Promises::Promise* prom1 = Promises::all(promises);
+	
+	auto values = Promises::await<std::vector<int>>(prom1);
+	
+	BOOST_CHECK((*values)[0] == 10);
+	BOOST_CHECK((*values)[1] == 20);
+	BOOST_CHECK((*values)[2] == 30);
+	
+	promises.push_back(Promises::Reject(Promises::Promise_Error("IUPUI")));
+	
+	try {
+		Promises::Promise* prom2 = Promises::all(promises);
+		Promises::await<std::vector<int>>(prom2);
+	} catch (const std::exception &ex) {
+		BOOST_CHECK(strcmp(ex.what(), "IUPUI") == 0);
+	}
+}
+
+BOOST_AUTO_TEST_CASE(Promise_Hash_Test) {
+	typedef std::pair<std::string, Promises::IPromise*> prom_pair;
+	
+	std::map<std::string, Promises::IPromise*> promises;
+	promises.insert(prom_pair("promise1", Promises::Resolve<int>(10)));
+	promises.insert(prom_pair("promise2", promise([](Promises::Settlement settle) {
+		settle.resolve<int>(20);
+	})));
+	promises.insert(prom_pair("promise3", promise([](Promises::Settlement settle) {
+		settle.resolve<int>(30);
+	})));
+	
+	Promises::Promise* prom1 = Promises::hash(promises);
+	
+	auto values = Promises::await<std::map<std::string, int>>(prom1);
+
+	BOOST_CHECK((*values)["promise1"] == 10);
+	BOOST_CHECK((*values)["promise2"] == 20);
+	BOOST_CHECK((*values)["promise3"] == 30);
+	
+	promises.insert(prom_pair("promise4", Promises::Reject(Promises::Promise_Error("IUPUI"))));
+	
+	try {
+		Promises::Promise* prom2 = Promises::hash(promises);
+		Promises::await<std::map<std::string, Promises::IPromise*>>(prom2);
+	} catch (const std::exception &ex) {
+		BOOST_CHECK(strcmp(ex.what(), "IUPUI") == 0);
+	}
 }
 
 BOOST_AUTO_TEST_SUITE_END()
