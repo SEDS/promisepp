@@ -276,7 +276,7 @@ BOOST_AUTO_TEST_CASE(Promise_All_Test) {
 		settle.resolve<int>(30);
 	}));
 	
-	Promises::Promise* prom1 = Promises::all(promises);
+	Promises::Promise* prom1 = Promises::all<int>(promises);
 	
 	auto values = Promises::await<std::vector<int>>(prom1);
 	
@@ -284,10 +284,13 @@ BOOST_AUTO_TEST_CASE(Promise_All_Test) {
 	BOOST_CHECK((*values)[1] == 20);
 	BOOST_CHECK((*values)[2] == 30);
 	
+	//make sure the 1st rejected reason is used
 	promises.push_back(Promises::Reject(Promises::Promise_Error("IUPUI")));
+	promises.push_back(Promises::Reject(Promises::Promise_Error("nyalia")));
+	
+	Promises::Promise* prom2 = Promises::all<int>(promises);
 	
 	try {
-		Promises::Promise* prom2 = Promises::all(promises);
 		Promises::await<std::vector<int>>(prom2);
 	} catch (const std::exception &ex) {
 		BOOST_CHECK(strcmp(ex.what(), "IUPUI") == 0);
@@ -306,7 +309,7 @@ BOOST_AUTO_TEST_CASE(Promise_Hash_Test) {
 		settle.resolve<int>(30);
 	})));
 	
-	Promises::Promise* prom1 = Promises::hash(promises);
+	Promises::Promise* prom1 = Promises::hash<std::string, int>(promises);
 	
 	auto values = Promises::await<std::map<std::string, int>>(prom1);
 
@@ -314,10 +317,12 @@ BOOST_AUTO_TEST_CASE(Promise_Hash_Test) {
 	BOOST_CHECK((*values)["promise2"] == 20);
 	BOOST_CHECK((*values)["promise3"] == 30);
 	
+	//make sure the 1st rejected reason is used
 	promises.insert(prom_pair("promise4", Promises::Reject(Promises::Promise_Error("IUPUI"))));
+	promises.insert(prom_pair("promise5", Promises::Reject(Promises::Promise_Error("nyalia"))));
+	Promises::Promise* prom2 = Promises::hash<std::string, int>(promises);
 	
 	try {
-		Promises::Promise* prom2 = Promises::hash(promises);
 		Promises::await<std::map<std::string, Promises::IPromise*>>(prom2);
 	} catch (const std::exception &ex) {
 		BOOST_CHECK(strcmp(ex.what(), "IUPUI") == 0);

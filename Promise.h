@@ -545,19 +545,20 @@ namespace Promises {
 		return value;
 	}
 
+	template<typename COMMONTYPE>
 	Promise* all(std::vector<IPromise*> &promises) {
 
 		Promise* continuation = nullptr;
 
 		ILambda* lam = create_settlement_lambda([&promises](Settlement settle) {
 			//create the list for results
-			std::vector<int> results;
+			std::vector<COMMONTYPE> results;
 
 			//loop through the promises
 			size_t i = 0;
 			for (i = 0; i < promises.size(); ++i) {
 				try {
-					int* value = await<int>(promises[i]);
+					COMMONTYPE* value = await<COMMONTYPE>(promises[i]);
 					results.push_back(*value);
 				} catch (const std::exception &ex) {
 					settle.reject(Promise_Error(ex.what()));
@@ -566,7 +567,7 @@ namespace Promises {
 			}
 			
 			if (i < (promises.size()+1)) {
-				settle.resolve<std::vector<int>>(results);
+				settle.resolve<std::vector<COMMONTYPE>>(results);
 			}
 		});
 
@@ -575,19 +576,20 @@ namespace Promises {
 		return continuation;
 	}
 
-	Promise* hash(std::map<std::string, Promises::IPromise*> &promises) {
+	template<typename KEYTYPE, typename COMMONTYPE>
+	Promise* hash(std::map<KEYTYPE, Promises::IPromise*> &promises) {
 
 		Promise* continuation = nullptr;
 
 		ILambda* lam = create_settlement_lambda([&promises](Settlement settle) {
-			std::map<std::string, int> results;
+			std::map<KEYTYPE, COMMONTYPE> results;
 			bool early_termination = false;
 			
 			//loop through the promises
 			for (auto it = promises.begin(); it != promises.end(); it++) {
 				try {
-					int* value = await<int>(it->second);
-					results.insert(std::pair<std::string, int>(it->first, *value));
+					COMMONTYPE* value = await<COMMONTYPE>(it->second);
+					results.insert(std::pair<KEYTYPE, COMMONTYPE>(it->first, *value));
 				} catch (const std::exception &ex) {
 					settle.reject(Promise_Error(ex.what()));
 					it = promises.end();
@@ -597,7 +599,7 @@ namespace Promises {
 			}
 			
 			if (!early_termination) {
-				settle.resolve<std::map<std::string, int>>(results);
+				settle.resolve<std::map<KEYTYPE, COMMONTYPE>>(results);
 			}
 		});
 
