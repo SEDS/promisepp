@@ -10,7 +10,7 @@ namespace Promises {
 		Rejected
 	};
 	
-	static std::logic_error noerr("NO ERR");
+	const static std::logic_error noerr("NO ERR");
 
 	class State {
 	public:
@@ -45,11 +45,33 @@ namespace Promises {
 		}
 
 		virtual void *get_value(void) = 0;
-		virtual std::exception& get_reason(void) = 0;
+		virtual const std::exception& get_reason(void) = 0;
 
 	private:
 		Status _status;
 	};
+
+	//PendingState is a struct because it has
+	//nothing to be private or protected
+	struct PendingState : public State {
+		virtual void* get_value(void) {
+			return nullptr;
+		}
+		
+		virtual const std::exception& get_reason(void) {
+			return noerr;
+		}
+		
+		bool operator == (const State &state) {
+			return State::operator == (state);
+		}
+		
+		bool operator != (const State &state) {
+			return State::operator != (state);
+		}
+	};
+
+	static PendingState pending_state;
 
 	template <typename T>
 	class ResolvedState : public State {
@@ -80,7 +102,7 @@ namespace Promises {
 			return _value;
 		}
 		
-		virtual std::exception& get_reason(void) {
+		virtual const std::exception& get_reason(void) {
 			return noerr;
 		}
 		
@@ -128,7 +150,7 @@ namespace Promises {
 			return nullptr;
 		}
 		
-		virtual std::exception& get_reason(void) {
+		virtual const std::exception& get_reason(void) {
 			return _reason;
 		}
 		

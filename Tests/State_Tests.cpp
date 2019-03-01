@@ -17,6 +17,13 @@ BOOST_AUTO_TEST_CASE(Default_Constructor_Test) {
     BOOST_CHECK(strcmp(rejected.get_reason().what(), Promises::noerr.what()) == 0);
 }
 
+BOOST_AUTO_TEST_CASE(Pending_Constructor_Test) {
+	Promises::PendingState pending;
+	
+	BOOST_CHECK(pending.get_value() == nullptr);
+    BOOST_CHECK(strcmp(pending.get_reason().what(), Promises::noerr.what()) == 0);
+}
+
 BOOST_AUTO_TEST_CASE(Resolved_Constructor_Test) {
 	char* c = new char('$');
     Promises::ResolvedState<char> resolved(c);
@@ -67,6 +74,9 @@ BOOST_AUTO_TEST_CASE(Destructor_Test) {
 BOOST_AUTO_TEST_CASE(Equality_Test) {
 	char* c = new char('$');
 	int* num = new int(10);
+
+	Promises::PendingState pending1;
+	Promises::PendingState pending2;
 	
     Promises::ResolvedState<char> resolved1(c);
 	Promises::ResolvedState<int> resolved2(num);
@@ -74,18 +84,18 @@ BOOST_AUTO_TEST_CASE(Equality_Test) {
 	Promises::RejectedState rejected1(std::logic_error("test"));
 	Promises::RejectedState rejected2(std::logic_error("another"));
 
+	BOOST_CHECK(pending1 == pending2);
 	BOOST_CHECK(resolved1 == resolved2);
 	BOOST_CHECK(rejected1 == rejected2);
-	
-	BOOST_CHECK(resolved1 != rejected1);
-	BOOST_CHECK(rejected1 != resolved1);
 }
 
 BOOST_AUTO_TEST_CASE(Inequality_Test) {
 	char* c = new char('$');
+	Promises::PendingState pending;
     Promises::ResolvedState<char> resolved(c);
 	Promises::RejectedState rejected(std::logic_error("test"));
 	
+	BOOST_CHECK(pending != rejected);
 	BOOST_CHECK(resolved != rejected);
 	BOOST_CHECK(rejected != resolved);
 }

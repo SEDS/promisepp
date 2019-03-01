@@ -48,6 +48,12 @@ namespace Promises {
 			IPromise* prom = lam(value);
             return prom;
         }
+
+		template<typename LAMBDA>
+		IPromise* chain (LAMBDA lam) {
+			IPromise* prom = lam();
+            return prom;
+        }
     };
 
     template<>
@@ -56,6 +62,12 @@ namespace Promises {
         template<typename LAMBDA, typename T>
         IPromise* chain (LAMBDA lam, T &value) {
 			lam(value);
+            return nullptr;
+        }
+
+		template<typename LAMBDA>
+		IPromise* chain (LAMBDA lam) {
+			lam();
             return nullptr;
         }
     };
@@ -74,8 +86,8 @@ namespace Promises {
 			
 			typedef typename lambda_if_not_void<LAMBDA>::type chain_type;
 			Chain<chain_type> chainer;
-			std::exception& reason = stat->get_reason();
-			IPromise* p = chainer.template chain<LAMBDA, std::exception>(_lam, reason);
+			const std::exception& reason = stat->get_reason();
+			IPromise* p = chainer.template chain<LAMBDA, const std::exception>(_lam, reason);
 
 			return p;
 		}

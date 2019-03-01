@@ -44,4 +44,12 @@ BOOST_AUTO_TEST_CASE(Inequality_Op_Test) {
     BOOST_CHECK(err != ex);
 }
 
+BOOST_AUTO_TEST_CASE(Throw_Test) {
+    try {
+        throw Promises::Promise_Error("test");
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "test") == 0);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

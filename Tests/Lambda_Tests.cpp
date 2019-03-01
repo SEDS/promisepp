@@ -8,12 +8,12 @@ BOOST_AUTO_TEST_SUITE(LAMBDA_SUITE)
 BOOST_AUTO_TEST_CASE(RejectedLambda_Test) {
 
 	//lambda return void
-	Promises::ILambda* lam1 = rejected_lambda([](std::exception &ex){
+	Promises::ILambda* lam1 = rejected_lambda([](const std::exception &ex){
 		BOOST_CHECK(strcmp(ex.what(), "test") == 0);
 	});
 	
 	//lambda return promise
-	Promises::ILambda* lam2 = rejected_lambda([](std::exception &ex) -> Promises::IPromise* {
+	Promises::ILambda* lam2 = rejected_lambda([](const std::exception &ex) -> Promises::IPromise* {
 		BOOST_CHECK(strcmp(ex.what(), "test") == 0);
 		
 		Promises::IPromise* prom = nullptr;

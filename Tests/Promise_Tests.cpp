@@ -41,7 +41,7 @@ BOOST_AUTO_TEST_CASE(Promise_Default_Constructor_Test) {
     BOOST_CHECK(prom.get_state() == nullptr);
 
     try {
-        prom.then([](int num) {}, [](std::exception &ex) {});
+        prom.then([](int num) {}, [](const std::exception &ex) {});
     } catch (const std::exception &ex) {
         BOOST_CHECK(strcmp(ex.what(), "Promise.then(): state is null") == 0);
     }
@@ -53,23 +53,16 @@ BOOST_AUTO_TEST_CASE(Promise_Default_Constructor_Test) {
     }
 
     try {
-        Promises::ILambda* lam = resolved_lambda([](int num){ });
-        prom.then(lam);
-    } catch (const std::exception &ex) {
-        BOOST_CHECK(strcmp(ex.what(), "Promise.then(): state is null") == 0);
-    }
-
-    try {
-        prom._catch([](std::exception &ex) {});
+        prom._catch([](const std::exception &ex) {});
     } catch (const std::exception &ex) {
         BOOST_CHECK(strcmp(ex.what(), "Promise.catch(): state is null") == 0);
     }
 
-    try {
-        prom.finally([](int num) {});
-    } catch (const std::exception &ex) {
-        BOOST_CHECK(strcmp(ex.what(), "Promise.finally(): state is null") == 0);
-    }
+    // try {
+    //     prom.finally([]() {});
+    // } catch (const std::exception &ex) {
+    //     BOOST_CHECK(strcmp(ex.what(), "Promise.finally(): state is null") == 0);
+    // }
 }
 
 BOOST_AUTO_TEST_CASE(Settlement_Resolve_Test) {
@@ -105,15 +98,26 @@ BOOST_AUTO_TEST_CASE(Promise_SettlementLambda_Constructor_Test) {
 }
 
 BOOST_AUTO_TEST_CASE(Await_Test) {
-    Promises::ILambda* lam = Promises::create_settlement_lambda([](Promises::Settlement settle) {
+    Promises::ILambda* lam1 = Promises::create_settlement_lambda([](Promises::Settlement settle) {
         settle.resolve<int>(10);
     });
 
-    Promises::Promise* prom = new Promises::Promise(lam);
-    int* v = Promises::await<int>(prom);
+    Promises::Promise* prom1 = new Promises::Promise(lam1);
+    int* v = Promises::await<int>(prom1);
     BOOST_CHECK(*v == 10);
+    delete prom1;
 
-    delete prom;
+    Promises::ILambda* lam2 = Promises::create_settlement_lambda([](Promises::Settlement settle) {
+        settle.reject(std::logic_error("nyalia"));
+    });
+
+    Promises::Promise* prom2 = new Promises::Promise(lam2);
+    try {
+        Promises::await<int>(prom2);
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "nyalia") == 0);
+    }
+    delete prom2;
     
 }
 
@@ -126,27 +130,134 @@ BOOST_AUTO_TEST_CASE(Promise_Factory_Method_Test) {
     BOOST_CHECK(*v == 10);
 }
 
-// BOOST_AUTO_TEST_CASE(Double_Lambda_Then_Test) {
-//     Promises::Promise* prom1 = promise([](Promises::Settlement settle) {
-//         settle.resolve<int>(10);
-//     });
+BOOST_AUTO_TEST_CASE(Double_Lambda_Then_Test) {
+    Promises::Promise* prom1 = promise([](Promises::Settlement settle) {
+        settle.resolve<int>(10);
+    });
 
-//     //tests the resolve handle
-//     auto t1 = prom1->then([](int value) {
-//         BOOST_CHECK(value == 10);
-//     }, [](std::exception &ex){});
+    //tests the resolve handle
+    auto t1 = prom1->then([](int value) {
+        BOOST_CHECK(value == 10);
+    }, [](const std::exception &ex){});
 
-//     Promises::Promise* prom2 = promise([](Promises::Settlement settle) {
-//         settle.reject(std::logic_error("test"));
-//     });
+    Promises::Promise* prom2 = promise([](Promises::Settlement settle) {
+        settle.reject(std::logic_error("test"));
+    });
 
-//     //tests the reject handle
-//     auto t2 = prom2->then([](int value) { }, [](std::exception &ex){
-//         BOOST_CHECK(strcmp(ex.what(), "test") == 0);
-//     });
+    //tests the reject handle
+    auto t2 = prom2->then([](int value) { }, [](const std::exception &ex){
+        BOOST_CHECK(strcmp(ex.what(), "test") == 0);
+    });
 
-//     Promises::await<int>(t1);
-//     Promises::await<int>(t2);
-// }
+    Promises::await<int>(t2);
+}
+
+BOOST_AUTO_TEST_CASE(Single_Lambda_Then_Test) {
+    Promises::Promise* prom = promise([](Promises::Settlement settle) {
+        settle.resolve<int>(10);
+    });
+
+    auto t1 = prom->then([](int value) {
+        BOOST_CHECK(value == 10);
+    });
+
+    Promises::await<int>(t1);
+}
+
+BOOST_AUTO_TEST_CASE(Lambda_Catch_Test) {
+    Promises::Promise* prom = promise([](Promises::Settlement settle) {
+        settle.reject(Promises::Promise_Error("nyalia"));
+    });
+
+    auto t = prom->_catch([](const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "nyalia") == 0);
+    });
+
+    Promises::await<int>(t);
+}
+
+BOOST_AUTO_TEST_CASE(Bubble_Resolve_Test) {
+    Promises::Promise* prom = promise([](Promises::Settlement settle) {
+        settle.resolve<int>(10);
+    });
+
+    //tests the resolve handle when value must be bubbled downstream
+    auto t = prom->_catch([](const std::exception &ex) { })
+    ->_catch([](const std::exception &ex) { })
+    ->_catch([](const std::exception &ex) { })
+    ->then([](int value) {
+        BOOST_CHECK(value == 10);
+    });
+
+    Promises::await<int>(t);
+}
+
+BOOST_AUTO_TEST_CASE(Bubble_Reject_Test) {
+    Promises::Promise* prom = promise([](Promises::Settlement settle) {
+        settle.reject(Promises::Promise_Error("nyalia"));
+    });
+
+    auto t = prom->then([](int num){})
+    ->then([](int num){})
+    ->then([](int num){})
+    ->_catch([](const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "nyalia") == 0);
+    });
+
+    Promises::await<int>(t);
+}
+
+BOOST_AUTO_TEST_CASE(PreResolved_Test) {
+    auto prom = Promises::Resolve<int>(10);
+
+    prom->then([](int num) {
+        BOOST_CHECK(num == 10);
+    });
+
+    auto v = Promises::await<int>(prom);
+    BOOST_CHECK(*v == 10);
+}
+
+BOOST_AUTO_TEST_CASE(PreRejected_Test) {
+    auto prom = Promises::Reject(Promises::Promise_Error("IUPUI"));
+
+    prom->_catch([](const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "IUPUI") == 0);
+    });
+
+    try {
+        Promises::await<int>(prom);
+    } catch (const std::exception &ex) {
+        BOOST_CHECK(strcmp(ex.what(), "IUPUI") == 0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(Finally_Test) {
+    Promises::Promise* prom = promise([](Promises::Settlement settle) {
+        settle.reject(Promises::Promise_Error("nyalia"));
+    });
+
+    auto t1 = prom->then([](int num){})
+    ->then([](int num){})
+    ->then([](int num){})
+    ->finally([](){ } )
+    ->_catch([](const std::exception &ex) { 
+        BOOST_CHECK(strcmp(ex.what(), "nyalia") == 0);
+    });
+
+    Promises::await<int>(t1);
+
+    auto t2 = prom->then([](int num){})
+    ->then([](int num){})
+    ->then([](int num){})
+    ->_catch([](const std::exception &ex) { 
+        return Promises::Resolve<int>(10);
+    })
+    ->finally([](){
+        BOOST_CHECK(true);
+    });
+
+    Promises::await<int>(t2);
+}
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -91,6 +91,46 @@ namespace Promises {
 			return nullptr;
 		}
 	};
+
+	//NoArg Promise and Lambda
+	//used only for Promise.finally()
+	class NoArgPromise : public IPromise {
+		public:
+			NoArgPromise(State* state)
+				:_state(state)
+			{ }
+
+			virtual ~NoArgPromise(void) {}
+
+			virtual State* get_state(void) {
+				return _state;
+			}
+		private:
+			State* _state;
+			virtual void _resolve(State* state) { }
+			virtual void _reject(State* state) { }
+			virtual void Join(void) { }
+	};
+	
+	template <typename LAMBDA>
+	class NoArgLambda : public ILambda {
+	public:
+		NoArgLambda(LAMBDA l)
+			: _lam(l)
+		{ }
+
+		virtual IPromise* call(State* stat) {			
+			_lam();
+			//The state needs to bubble downstream
+			NoArgPromise* prom = memory_pool->allocate<NoArgPromise>(stat);
+			return prom;
+		}
+
+	private:
+		LAMBDA _lam;
+
+		virtual void call(IPromise* prom) { }
+	};
 	
 	template<typename LAMBDA>
 	SettlementLambda<LAMBDA>* create_settlement_lambda(LAMBDA handler) {
@@ -121,7 +161,7 @@ namespace Promises {
 
 		Promise(ILambda* lam)
 			: _id(std::to_string(_promiseID + 1)),
-			_state(nullptr),
+			_state(&pending_state),
 			_settleHandle(lam),
 			_resolveHandle(nullptr),
 			_rejectHandle(nullptr)
@@ -159,7 +199,7 @@ namespace Promises {
 
 			_stateLock.lock();
 
-			if (_state == nullptr || *_state == Pending) {
+			if (*_state == Pending) {
 				continuation = memory_pool->allocate<Promise>(reslam, rejlam);
 				_Promises.push_back(continuation);
 			} else if (*_state == Resolved) {
@@ -174,7 +214,7 @@ namespace Promises {
 		}
 		
 		template <typename LAMBDA>
-		Promise* then(LAMBDA handler) {
+		Promise* then(LAMBDA resolver) {
 			if (_state == NULL || _state == nullptr) {
 				throw Promise_Error("Promise.then(): state is null");
 			}
@@ -182,42 +222,19 @@ namespace Promises {
 			Promise* continuation = nullptr;
 			ILambda* lam = nullptr;
 			
-			//this check is necessary so the proper nullptr's are passed into continuation promise
-			lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(handler);
-
 			_stateLock.lock();
 
-			if (_state == nullptr || *_state == Pending) {
+			if (*_state == Pending) {
+				lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(resolver);
 				ILambda* fake = nullptr;
 				continuation = memory_pool->allocate<Promise>(lam, fake);
 				_Promises.push_back(continuation);
 			} else if (*_state == Resolved) {
+				lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(resolver);
 				continuation = memory_pool->allocate<Promise>(lam, this->_state);
-			}
-
-			_stateLock.unlock();
-
-			return continuation;
-		}
-		
-		Promise* then(ILambda *lam) {
-			if (lam == NULL || lam == nullptr) {
-				throw Promise_Error("Promise.then(): lambda is null");
-			}
-
-			if (_state == NULL || _state == nullptr) {
-				throw Promise_Error("Promise.then(): state is null");
-			}
-
-			Promise* continuation = nullptr;
-						
-			_stateLock.lock();
-			if (_state == nullptr || *_state == Pending) {
+			} else {
 				ILambda* fake = nullptr;
-				continuation = memory_pool->allocate<Promise>(lam, fake);
-				_Promises.push_back(continuation);
-			} else if (*_state == Resolved) {
-				continuation = memory_pool->allocate<Promise>(lam, this->_state);
+				continuation = memory_pool->allocate<Promise>(fake, this->_state);
 			}
 
 			_stateLock.unlock();
@@ -231,8 +248,26 @@ namespace Promises {
 				throw Promise_Error("Promise.catch(): state is null");
 			}
 
-			ILambda* rejlam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
-			return then(rejlam);
+			Promise* continuation = nullptr;
+			ILambda* lam = nullptr;
+						
+			_stateLock.lock();
+			if (*_state == Pending) {
+				ILambda* fake = nullptr;
+				lam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
+				continuation = memory_pool->allocate<Promise>(fake, lam);
+				_Promises.push_back(continuation);
+			} else if (*_state == Resolved) {
+				ILambda* fake = nullptr;
+				continuation = memory_pool->allocate<Promise>(fake, this->_state);
+			} else {
+				lam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
+				continuation = memory_pool->allocate<Promise>(lam, this->_state);
+			}
+
+			_stateLock.unlock();
+
+			return continuation;
 		}
 
 		template <typename LAMBDA>
@@ -242,16 +277,16 @@ namespace Promises {
 			}
 
 			Promise* continuation = nullptr;
-			ILambda* lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(handler);
+			ILambda* lam = memory_pool->allocate<NoArgLambda<LAMBDA>>(handler);
 
 			_stateLock.lock();
 
-			if (_state == nullptr || *_state == Pending) {
-				ILambda* auxlam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(handler);
-				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, auxlam);
+			if (*_state == Pending) {
+				ILambda* aux = memory_pool->allocate<NoArgLambda<LAMBDA>>(handler);
+				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, aux);
 				_Promises.push_back(continuation);
 			} else {
-				continuation = memory_pool->allocate<Promise, ILambda*, State*>(lam, _state);
+				continuation = memory_pool->allocate<Promise, ILambda*, State*>(lam, this->_state);
 			}
 
 			_stateLock.unlock();
@@ -276,7 +311,7 @@ namespace Promises {
 
 		Promise(ILambda* lam, State* parentState)
 			: _id(std::to_string(_promiseID + 1)),
-			_state(nullptr),
+			_state(&pending_state),
 			_settleHandle(nullptr),
 			_resolveHandle(nullptr),
 			_rejectHandle(nullptr)
@@ -294,7 +329,7 @@ namespace Promises {
 
 		Promise(ILambda* res, ILambda* rej)
 			: _id(std::to_string(_promiseID + 1)),
-			_state(nullptr),
+			_state(&pending_state),
 			_settleHandle(nullptr),
 			_resolveHandle(res),
 			_rejectHandle(rej)
@@ -434,8 +469,8 @@ namespace Promises {
 		}
 	};
 
-	Promise* Reject(std::exception e) {
-		State* state = memory_pool->allocate<RejectedState>(e);
+	Promise* Reject(const std::exception &e) {
+		State* state = memory_pool->allocate<RejectedState, const std::exception&>(e);
 
 		Promise* prom = memory_pool->allocate<Promise, State*>(state);
 
@@ -446,7 +481,7 @@ namespace Promises {
 	Promise* Resolve(T v) {
 		T *value = memory_pool->allocate<T>();
 		*value = v;
-		State* state = memory_pool->allocate<ResolvedState<T>>(value);
+		State* state = memory_pool->allocate<ResolvedState<T>, T*>(value);
 
 		Promise* prom = memory_pool->allocate<Promise, State*>(state);
 
@@ -586,11 +621,10 @@ namespace Promises {
 		
 		T* value = nullptr;
 
-		if (s != nullptr) {
-			if (*s == Rejected) {
-				throw s->get_reason();
-			}
-
+		if (s != nullptr && *s == Rejected) {
+			const std::exception &e = s->get_reason();
+			throw Promises::Promise_Error(e.what());
+		} else if (s != nullptr && *s == Resolved) {
 			value = (T*)s->get_value();
 		}
 		
