@@ -39,6 +39,7 @@ namespace Promises {
 				}
 				
 				_msg = err.what();
+                return (*this);
 			}
 
             bool operator == (const Promise_Error &err) {
