@@ -1,6 +1,5 @@
 #include "Pool.h"
 #include "Slab_Allocator.h"
-#include "IPromise.h"
 #include <mutex>
 #include <iostream>
 #define MEGA_BYTE 1048576
@@ -22,10 +21,8 @@ namespace Promises {
         //do nothing
     }
 
-    Pool::~Pool(void)
-    {
-        if (_memory != NULL || _memory != nullptr)
-        {
+    Pool::~Pool(void) {
+        if (_memory != NULL || _memory != nullptr) {
             free_pool(_memory);
             delete _memory;
         }
@@ -33,10 +30,8 @@ namespace Promises {
         _is_created = false;
     }
 
-    Pool* Pool::Instance()
-    {
-        if (!_is_created)
-        {
+    Pool* Pool::Instance() {
+        if (!_is_created) {
             _pool = new Pool();
             _is_created = true;
             return _pool;
@@ -45,13 +40,11 @@ namespace Promises {
             return _pool;
     }
 
-    void Pool::deallocate(void* mem)
-    {
+    void Pool::deallocate(void* mem) {
         free_mem(_memory, mem);
     }
 
-    Pool& Pool::operator = (const Pool& p)
-    {
+    Pool& Pool::operator = (const Pool& p) {
         if (this == &p)
             return *this;
         
