@@ -1,137 +1,169 @@
-#include <stdexcept>
+#include "Promise_Error.h"
 
 #ifndef STATE_H
 #define STATE_H
 
 namespace Promises {
-    enum Status
-	{
+    enum Status {
 		Pending,
 		Resolved,
 		Rejected
 	};
+	
+	const static std::logic_error noerr("NO ERR");
 
-	class State
-	{
+	class State {
 	public:
 		State(void)
 			: _status(Pending)
-		{
-			//do nothing
-		}
+		{ }
 
 		State(Status stat)
 			: _status(stat)
-		{
-			//do nothing
-		}
+		{ }
 
 		State(const State &state)
 			: _status(state._status)
-		{
-			//do nothing
-		}
+		{ }
 
 		virtual ~State(void) {}
 
-		bool operator==(Status stat)
-		{
+		bool operator == (Status stat) {
 			return this->_status == stat;
 		}
 
-		bool operator!=(Status stat)
-		{
+		bool operator != (Status stat) {
 			return this->_status != stat;
 		}
+		
+		bool operator == (const State &state) {
+			return (*this) == state._status;
+		}
+		
+		bool operator != (const State &state) {
+			return (*this) != state._status;
+		}
 
-		virtual void *getValue(void) = 0;
-		virtual std::exception getReason(void) = 0;
+		virtual void *get_value(void) = 0;
+		virtual const std::exception& get_reason(void) = 0;
 
 	private:
 		Status _status;
 	};
 
-    	template <typename T>
-	class ResolvedState : public State
-	{
+	//PendingState is a struct because it has
+	//nothing to be private or protected
+	struct PendingState : public State {
+		virtual void* get_value(void) {
+			return nullptr;
+		}
+		
+		virtual const std::exception& get_reason(void) {
+			return noerr;
+		}
+		
+		bool operator == (const State &state) {
+			return State::operator == (state);
+		}
+		
+		bool operator != (const State &state) {
+			return State::operator != (state);
+		}
+	};
+
+	static PendingState pending_state;
+
+	template <typename T>
+	class ResolvedState : public State {
 	public:
 		ResolvedState(void)
 			: _value(nullptr)
-		{
-			//do nothing
-		}
+		{ }
 
 		ResolvedState(T *v)
 			: State(Resolved),
 			_value(v)
-		{
-			//do nothing
-		}
+		{ }
 
-		ResolvedState(const ResolvedState &state)
+		ResolvedState(ResolvedState &state)
 			: State(state),
 			_value(state._value)
 		{
-			//do nothing
+			state._value = nullptr;
 		}
 
-		virtual ~ResolvedState(void)
-		{
-			delete _value;
+		virtual ~ResolvedState(void) {
+			if(_value != nullptr) {
+				delete _value;
+			}
 		}
 
-		virtual void *getValue(void)
-		{
+		virtual void* get_value(void) {
 			return _value;
 		}
-		virtual std::exception getReason(void)
-		{
-			return std::logic_error("NO ERR");
+		
+		virtual const std::exception& get_reason(void) {
+			return noerr;
+		}
+		
+		bool operator == (const State &state) {
+			return State::operator == (state);
+		}
+		
+		bool operator != (const State &state) {
+			return State::operator != (state);
 		}
 
 	private:
-		T *_value;
+		T* _value;
 	};
 
-	class RejectedState : public State
-	{
+	class RejectedState : public State {
 	public:
 		RejectedState(void)
-			: _reason(std::logic_error("NO ERR"))
-		{
-			//do nothing
-		}
+			: _reason(noerr)
+		{ }
 
-		RejectedState(std::exception e)
+		RejectedState(const std::exception &e)
 			: State(Rejected),
 			_reason(e)
-		{
-			//do nothing
-		}
+		{ }
+		
+		RejectedState(const std::string &msg)
+			: State(Rejected),
+			_reason(msg)
+		{ }
+		
+		RejectedState(const char* msg)
+			: State(Rejected),
+			_reason(msg)
+		{ }
 
 		RejectedState(const RejectedState &state)
 			: State(state),
 			_reason(state._reason)
-		{
-			//do nothing
-		}
+		{ }
 
-		virtual ~RejectedState(void)
-		{
-			//do nothing
-		}
+		virtual ~RejectedState(void) { }
 
-		virtual void *getValue(void)
-		{
+		virtual void *get_value(void) {
 			return nullptr;
 		}
-		virtual std::exception getReason(void)
-		{
+		
+		virtual const std::exception& get_reason(void) {
 			return _reason;
+		}
+		
+		bool operator == (const State &state) {
+			return State::operator == (state);
+		}
+		
+		bool operator != (const State &state) {
+			return State::operator != (state);
 		}
 
 	private:
-		std::exception _reason;
+		Promise_Error _reason;
 	};
 
 }

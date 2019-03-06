@@ -1,9 +1,9 @@
-#include "IPromise.h"
 #include "Slab_Allocator.h"
 #include <cstdlib>
 #include <vector>
 #include <condition_variable>
 #include <mutex>
+#include <memory>
 
 #ifndef POOL_H
 #define POOL_H
@@ -12,16 +12,14 @@ namespace Promises {
 
 	//Pool is a class to manage the memory resources on a system.
 	//the class allocates memory in 1MB chunks using the slab allocator
-	class Pool
-	{
+	class Pool {
 	public:
 
 		static Pool* Instance();
 		~Pool(void);
 
 		template<typename T>
-		T* allocate()
-		{
+		T* allocate() {
 			this->_mem_lock.lock();
 
 			void* temp = alloc_mem(_memory, sizeof(T));
@@ -34,8 +32,7 @@ namespace Promises {
 		}
 
 		template<typename T, typename IN1>
-		T* allocate(IN1 arg1)
-		{
+		T* allocate(IN1 arg1) {
 			this->_mem_lock.lock();
 
 			void* temp = alloc_mem(_memory, sizeof(T));
@@ -48,8 +45,7 @@ namespace Promises {
 		}
 
 		template<typename T, typename IN1, typename IN2>
-		T* allocate(IN1 arg1, IN2 arg2)
-		{
+		T* allocate(IN1 arg1, IN2 arg2) {
 			this->_mem_lock.lock();
 
 			void* temp = alloc_mem(_memory, sizeof(T));
@@ -62,8 +58,6 @@ namespace Promises {
 		}
 
 		void deallocate(void* mem);
-
-		void promise_complete(void);
 
 	private:
 

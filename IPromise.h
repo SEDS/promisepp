@@ -4,12 +4,12 @@
 #include "State.h"
 
 namespace Promises {
-    class IPromise
-	{
+	
+    class IPromise {
 
 	public:
 		virtual ~IPromise(void) {}
-		virtual State* getState(void) = 0;
+		virtual State* get_state(void) = 0;
 
 	protected:
 		virtual void _resolve(State* state) = 0;
@@ -18,7 +18,6 @@ namespace Promises {
 
 		friend class Settlement;
 		friend class Pool;
-		friend class Finisher;
 
 		template <typename T>
 		friend T* await(IPromise*);

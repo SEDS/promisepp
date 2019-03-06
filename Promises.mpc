@@ -5,13 +5,15 @@ project (Promises) {
     specific(make) {
         compile_flags += -g -std=c++11
     }
-
+	
     Header_Files {
         IPromise.h
-        Promise.h
-        State.h
-        Pool.h
+		Pool.h
         Slab_Allocator.h
+		Promise_Error.h
+		Promise.h
+        State.h
+		Lambda.h
     }
 
     Source_Files {

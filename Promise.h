@@ -1,7 +1,10 @@
 #ifndef PROMISE_H
 #define PROMISE_H
 
+#include "IPromise.h"
+#include "Lambda.h"
 #include "Pool.h"
+#include "State.h"
 #include <functional>
 #include <stdexcept>
 #include <thread>
@@ -14,122 +17,168 @@
 #include <map>
 #include <iostream>
 #include <cstdlib>
+#include <type_traits>
 
-namespace Promises
-{
+namespace Promises {
 
 	static int _promiseID = 0;
-
-	class ILambda
-	{
-	public:
-		virtual ~ILambda(void) {}
-		virtual void call(IPromise* prom) = 0;
-		virtual IPromise* call(State* stat) = 0;
-	};
 
 	//init the memory pool as a unique ptr so it will be destructed once program terminates
 	static std::unique_ptr<Promises::Pool> memory_pool(Promises::Pool::Instance());
 
-	//Finisher - a class that safely destroys the environment and waits for all Promises to be fulfilled before termination.
-	class Finisher {
+	class Settlement {
+	public:
+		Settlement(IPromise* p)
+			: _prom(p)
+		{ }
+
+		Settlement(const Settlement &settle)
+			: _prom(settle._prom)
+		{ }
+
+		~Settlement(void) { }
+
+		template <typename T>
+		void resolve(T v) {
+			if (_prom == NULL || _prom == nullptr) {
+				throw Promise_Error("Settlement.resolve(): internal promise is null");
+			}
+
+			T *value = memory_pool->allocate<T>();
+			*value = v;
+			State* state = memory_pool->allocate<ResolvedState<T>, T*>(value);
+			_prom->_resolve(state);
+		}
+
+		void reject(const std::exception &e) {
+			if (_prom == NULL || _prom == nullptr) {
+				throw Promise_Error("Settlement.reject(): internal promise is null");
+			}
+
+			State* state = memory_pool->allocate<RejectedState, const std::exception&>(e);
+			_prom->_reject(state);
+		}
+		
+		void reject(const std::string &msg) {
+			if (_prom == NULL || _prom == nullptr) {
+				throw Promise_Error("Settlement.reject(): internal promise is null");
+			}
+
+			State* state = memory_pool->allocate<RejectedState, const std::string&>(msg);
+			_prom->_reject(state);
+		}
+
+	private:
+		IPromise *_prom;
+	};
+
+	template<typename LAMBDA>
+	class SettlementLambda : public ILambda {
+	public:
+		SettlementLambda(LAMBDA l)
+			: _lam(l)
+		{ }
+
+		virtual void call(IPromise *prom) {
+			Settlement sett(prom);
+			_lam(sett);
+		}
+
+	private:
+		LAMBDA _lam;
+
+		virtual IPromise* call(State* stat) {
+			return nullptr;
+		}
+	};
+
+	//NoArg Promise and Lambda
+	//used only for Promise.finally()
+	class NoArgPromise : public IPromise {
 		public:
-			explicit Finisher(void)
-			{
-				//nothing to do
+			NoArgPromise(State* state)
+				:_state(state)
+			{ }
+
+			virtual ~NoArgPromise(void) {}
+
+			virtual State* get_state(void) {
+				return _state;
 			}
-
-
-			void add_promise(IPromise* prom) {
-				_lock.lock();
-
-				_promises.push_back(prom);
-
-				_lock.unlock();
-			}
-
-			void finish (void) {
-				_lock.lock();
-
-				for(size_t i=0; i<_promises.size(); ++i) {
-					_promises[i]->Join();
-					// memory_pool->deallocate(_promises[i]);
-				}
-
-				_lock.unlock();
-			}
-
 		private:
-			std::mutex _lock;
-			std::vector<IPromise*> _promises;
+			State* _state;
+			virtual void _resolve(State* state) { }
+			virtual void _reject(State* state) { }
+			virtual void Join(void) { }
 	};
-
-	static Finisher finisher;
-	static bool exit_handle_created = false;
 	
-	void fin(void) {
-		finisher.finish();
+	template <typename LAMBDA>
+	class NoArgLambda : public ILambda {
+	public:
+		NoArgLambda(LAMBDA l)
+			: _lam(l)
+		{ }
+
+		virtual IPromise* call(State* stat) {			
+			_lam();
+			//The state needs to bubble downstream
+			NoArgPromise* prom = memory_pool->allocate<NoArgPromise>(stat);
+			return prom;
+		}
+
+	private:
+		LAMBDA _lam;
+
+		virtual void call(IPromise* prom) { }
+	};
+	
+	template<typename LAMBDA>
+	SettlementLambda<LAMBDA>* create_settlement_lambda(LAMBDA handler) {
+		SettlementLambda<LAMBDA>* lam = nullptr;
+		lam = memory_pool->allocate<SettlementLambda<LAMBDA>>(handler);
+		return lam;
 	}
-
-	class RejectedLambda : public ILambda
-	{
-		typedef std::function<IPromise*(std::exception)> lambdatype;
-
-	public:
-		RejectedLambda(lambdatype l)
-			: _lam(l)
-		{
-			//do nothing
-		}
-
-		virtual IPromise* call(State* stat)
-		{
-			std::exception reason = stat->getReason();
-			IPromise* p = _lam(reason);
-
-			return p;
-		}
-
-	private:
-		lambdatype _lam;
-
-		virtual void call(IPromise* prom)
-		{
-			//do nothing
-		}
+	
+	class Semaphore {
+		public:
+			Semaphore(void)
+				:_value(0)
+			{ }
+		
+			bool test_decrease(){
+				std::unique_lock<std::mutex> lock(_lock);
+				if(_value > 0) {
+					--_value;
+					return true;
+				}
+				return false;
+			}
+		
+			void decrease(void) {
+				std::unique_lock<std::mutex> lock(_lock);
+				
+				while(_value <= 0) {
+					_cond.wait(lock);
+				}
+				
+				--_value;
+			}
+			
+			void increase(void) {
+				std::unique_lock<std::mutex> lock(_lock);
+				++_value;
+				_cond.notify_one();
+			}
+		private:
+			size_t _value;
+			std::mutex _lock;
+			std::condition_variable _cond;
 	};
 
-	template <typename T>
-	class ResolvedLambda : public ILambda
-	{
-		typedef std::function<IPromise*(T)> lambdatype;
-
-	public:
-		ResolvedLambda(lambdatype l)
-			: _lam(l)
-		{
-			//do nothing
-		}
-
-		virtual IPromise* call(State* stat)
-		{
-			T *value = (T *)stat->getValue();
-			IPromise* p = _lam(*value);
-
-			return p;
-		}
-
-	private:
-		lambdatype _lam;
-
-		virtual void call(IPromise* prom)
-		{
-			//do nothing
-		}
-	};
-
-	class Promise : public IPromise
-	{
+	class Promise : public IPromise {
+	
+		//pool is friend because
+		//it has to be able to use the private constructors
 		friend class Pool;
 
 		template <typename T>
@@ -148,7 +197,7 @@ namespace Promises
 
 		Promise(ILambda* lam)
 			: _id(std::to_string(_promiseID + 1)),
-			_state(nullptr),
+			_state(&pending_state),
 			_settleHandle(lam),
 			_resolveHandle(nullptr),
 			_rejectHandle(nullptr)
@@ -157,102 +206,131 @@ namespace Promises
 			_settle();
 		}
 
-		virtual ~Promise(void)
-		{
-			try
-			{
+		virtual ~Promise(void) {
+			try {
 
 				_th.join();
-			}
-			catch (const std::exception &e)
-			{
+			} catch (const std::exception &e) {
 				//suppress a thread join in destructor
 				//because join potentially throws exception
 				//and that's not allowed in destructors because
 				//a thrown exception can stop the de-allocation
 				//of further memory.
 			}
-
-			if (_settleHandle != nullptr)
-				delete _settleHandle;
-
-			if (_resolveHandle != nullptr)
-				delete _resolveHandle;
-
-			if (_rejectHandle != nullptr)
-				delete _rejectHandle;
 		}
 
-		template <typename T>
-		Promise* then(std::function<Promise*(T)> resolver, std::function<Promise*(std::exception)> rejecter = nullptr)
-		{
+		template <typename RESLAM, typename REJLAM>
+		Promise* then(RESLAM resolver, REJLAM rejecter) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.then(): state is null");
+			}
+
 			Promise* continuation = nullptr;
 			ILambda* reslam = nullptr;
 			ILambda* rejlam = nullptr;
 
 			//this check is necessary so the proper nullptr's are passed into continuation promise
-			if (resolver != nullptr)
-				reslam = memory_pool->allocate<ResolvedLambda<T>>(resolver);
-
-			if (rejecter != nullptr)
-				rejlam = memory_pool->allocate<RejectedLambda>(rejecter);
+			reslam = memory_pool->allocate<ResolvedLambda<RESLAM>>(resolver);
+			rejlam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
 
 			_stateLock.lock();
 
-			if (_state == nullptr || *_state == Pending)
-			{
+			if (*_state == Pending) {
 				continuation = memory_pool->allocate<Promise>(reslam, rejlam);
 				_Promises.push_back(continuation);
-			}
-			else if (*_state == Resolved)
-			{
+			} else if (*_state == Resolved) {
 				continuation = memory_pool->allocate<Promise>(reslam, this->_state);
-			}
-			else
-			{
+			} else {
 				continuation = memory_pool->allocate<Promise>(rejlam, this->_state);
 			}
 
 			_stateLock.unlock();
 
-			finisher.add_promise(continuation);
-
 			return continuation;
 		}
+		
+		template <typename LAMBDA>
+		Promise* then(LAMBDA resolver) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.then(): state is null");
+			}
 
-		Promise* _catch(std::function<Promise*(std::exception)> rejecter)
-		{
-			return then<char>(nullptr, rejecter);
-		}
-
-		template <typename T>
-		Promise* finally(std::function<Promise*(T)> handler)
-		{
 			Promise* continuation = nullptr;
-			ILambda* lam = memory_pool->allocate<ResolvedLambda<T>>(handler);
-
+			ILambda* lam = nullptr;
+			
 			_stateLock.lock();
 
-			if (_state == nullptr || *_state == Pending)
-			{
-				ILambda* auxilliaryLam = memory_pool->allocate<ResolvedLambda<T>>(handler);
-				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, auxilliaryLam);
+			if (*_state == Pending) {
+				lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(resolver);
+				ILambda* fake = nullptr;
+				continuation = memory_pool->allocate<Promise>(lam, fake);
 				_Promises.push_back(continuation);
-			}
-			else
-			{
-				continuation = memory_pool->allocate<Promise, ILambda*, State*>(lam, _state);
+			} else if (*_state == Resolved) {
+				lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(resolver);
+				continuation = memory_pool->allocate<Promise>(lam, this->_state);
+			} else {
+				ILambda* fake = nullptr;
+				continuation = memory_pool->allocate<Promise>(fake, this->_state);
 			}
 
 			_stateLock.unlock();
 
-			finisher.add_promise(continuation);
+			return continuation;
+		}
+	
+		template<typename REJLAM>
+		Promise* _catch(REJLAM rejecter) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.catch(): state is null");
+			}
+
+			Promise* continuation = nullptr;
+			ILambda* lam = nullptr;
+						
+			_stateLock.lock();
+			if (*_state == Pending) {
+				ILambda* fake = nullptr;
+				lam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
+				continuation = memory_pool->allocate<Promise>(fake, lam);
+				_Promises.push_back(continuation);
+			} else if (*_state == Resolved) {
+				ILambda* fake = nullptr;
+				continuation = memory_pool->allocate<Promise>(fake, this->_state);
+			} else {
+				lam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
+				continuation = memory_pool->allocate<Promise>(lam, this->_state);
+			}
+
+			_stateLock.unlock();
 
 			return continuation;
 		}
 
-		virtual State* getState(void)
-		{
+		template <typename LAMBDA>
+		Promise* finally(LAMBDA handler) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.finally(): state is null");
+			}
+
+			Promise* continuation = nullptr;
+			ILambda* lam = memory_pool->allocate<NoArgLambda<LAMBDA>>(handler);
+
+			_stateLock.lock();
+
+			if (*_state == Pending) {
+				ILambda* aux = memory_pool->allocate<NoArgLambda<LAMBDA>>(handler);
+				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, aux);
+				_Promises.push_back(continuation);
+			} else {
+				continuation = memory_pool->allocate<Promise, ILambda*, State*>(lam, this->_state);
+			}
+
+			_stateLock.unlock();
+
+			return continuation;
+		}
+
+		virtual State* get_state(void) {
 			return this->_state;
 		}
 
@@ -269,20 +347,17 @@ namespace Promises
 
 		Promise(ILambda* lam, State* parentState)
 			: _id(std::to_string(_promiseID + 1)),
-			_state(nullptr),
+			_state(&pending_state),
 			_settleHandle(nullptr),
 			_resolveHandle(nullptr),
 			_rejectHandle(nullptr)
 		{
 			++_promiseID;
 
-			if (*parentState == Resolved)
-			{
+			if (*parentState == Resolved) {
 				_resolveHandle = lam;
 				this->_settle(parentState, nullptr);
-			}
-			else if (*parentState == Rejected)
-			{
+			} else if (*parentState == Rejected) {
 				_rejectHandle = lam;
 				this->_settle(nullptr, parentState);
 			}
@@ -290,7 +365,7 @@ namespace Promises
 
 		Promise(ILambda* res, ILambda* rej)
 			: _id(std::to_string(_promiseID + 1)),
-			_state(nullptr),
+			_state(&pending_state),
 			_settleHandle(nullptr),
 			_resolveHandle(res),
 			_rejectHandle(rej)
@@ -303,201 +378,137 @@ namespace Promises
 		ILambda* _settleHandle;
 		ILambda* _resolveHandle;
 		ILambda* _rejectHandle;
-		std::condition_variable _cv;
+		Semaphore _semp;
 		std::mutex _stateLock;
 		std::thread _th;
 		std::vector<Promise*> _Promises;
 
-		virtual void _resolve(State* state)
-		{
+		virtual void _resolve(State* state) {
 			_stateLock.lock();
 			_state = state;
 			_stateLock.unlock();
 
-			_cv.notify_all();
+			_semp.increase();
 
-			for (size_t i = 0; i < _Promises.size(); i++)
-			{
+			for (size_t i = 0; i < _Promises.size(); i++) {
 				_Promises[i]->_settle(_state, nullptr);
 			}
 		}
 
-		virtual void _reject(State* state)
-		{
+		virtual void _reject(State* state) {
 			_stateLock.lock();
 			_state = state;
 			_stateLock.unlock();
 
-			_cv.notify_all();
+			_semp.increase();
 
-			for (size_t i = 0; i < _Promises.size(); i++)
-			{
+			for (size_t i = 0; i < _Promises.size(); i++) {
 				_Promises[i]->_settle(nullptr, _state);
 			}
 		}
 
-		virtual void Join(void)
-		{
-			std::unique_lock<std::mutex> lk(this->_stateLock);
-
+		virtual void Join(void) {
 			//wait for promise to have state.
-			if(_state == nullptr || *_state == Pending)
-				this->_cv.wait(lk);
+			if (_state == nullptr || *_state == Pending) {
+				if (!_semp.test_decrease()) {
+					_semp.decrease();
+				}
+			}
 
-			if (this->_th.joinable())
+			if (this->_th.joinable()) {
 				this->_th.join();
+			}
 		}
 
-		void _withSettleHandle(void)
-		{
+		void _withSettleHandle(void) {
 			_settleHandle->call(this);
 		}
 
-		void _withResolveHandle(State* input)
-		{
+		void _withResolveHandle(State* input) {
 			//surround this in a try block
 			//so if an exception happens, then the promise is rejected instead.
 
 			//we need 2 seperate functions between this and _withRejectHandle
 			//because we need to call two different
 			IPromise* parent = _resolveHandle->call(input);
-			State* stat = parent->getState();
+			
+			//parent will only be nullptr on chain end
+			if(parent != nullptr) {
+				State* state = parent->get_state();
 
-			//if the resolve handle succeeds, the the promise chain
-			//is stil continuing with successful runs
-			if (*stat == Resolved)
-				_resolve(stat);
-			else
-				_reject(stat);
+				//if the resolve handle succeeds, the the promise chain
+				//is stil continuing with successful runs
+				if (*state == Resolved)
+					_resolve(state);
+				else
+					_reject(state);
+			} else {
+				_stateLock.lock();
+				_state = nullptr;
+				_stateLock.unlock();
+
+				_semp.increase();
+			}
 		}
 
-		void _withRejectHandle(State* input)
-		{
+		void _withRejectHandle(State* input) {
 			//surroung this in a try block
 			//so if an exception happens, then the promise is rejected instead.
 			IPromise* parent = _rejectHandle->call(input);
-			State* stat = parent->getState();
+			
+			//parent will only be nullptr on chain end
+			if(parent != nullptr) {
+				State* state = parent->get_state();
 
-			//if the reject handle succeeds, then the promise chain
-			//has been recovered and resolved
-			if (*stat == Resolved)
-				_resolve(stat);
-			else
-				_reject(stat);
+				//if the resolve handle succeeds, the the promise chain
+				//is stil continuing with successful runs
+				if (*state == Resolved)
+					_resolve(state);
+				else
+					_reject(state);
+			} else {
+				_stateLock.lock();
+				_state = nullptr;
+				_stateLock.unlock();
+
+				_semp.increase();
+			}
 		}
 
-		void _settle(void)
-		{
+		void _settle(void) {
 			_th = std::thread(&Promise::_withSettleHandle, this);
 		}
 
-		void _settle(State* withValue, State* withReason)
-		{
-			if (withValue != nullptr)
-			{
+		void _settle(State* withValue, State* withReason) {
+			if (withValue != nullptr) {
 				//run resolveHandle if this promise has one
-				if (_resolveHandle != nullptr)
-				{
+				if (_resolveHandle != nullptr) {
 					_th = std::thread(&Promise::_withResolveHandle, this, withValue);
 				}
 
 				//otherwise this promise doesn't have a resolve handle
 				//and the withValue needs to be percolated down.
-				else
-				{
+				else {
 					_resolve(withValue);
 				}
 			}
-			else if (withReason != nullptr)
-			{
+			else if (withReason != nullptr) {
 				//run rejectHandle if this promise has one
-				if (_rejectHandle != nullptr)
-				{
+				if (_rejectHandle != nullptr) {
 					_th = std::thread(&Promise::_withRejectHandle, this, withReason);
 				}
 
 				//otherwise this promise doesn't have a reject handle
 				//and the exception needs to be percolated down.
-				else
-				{
+				else {
 					_reject(withReason);
 				}
 			}
 		}
 	};
 
-	class Settlement
-	{
-	public:
-		Settlement(void)
-			: _prom(nullptr)
-		{
-			//do nothing
-		}
-
-		Settlement(IPromise* p)
-			: _prom(p)
-		{
-			//doe nothing
-		}
-
-		Settlement(const Settlement &settle)
-			: _prom(settle._prom)
-		{
-			//do nothing
-		}
-
-		~Settlement(void)
-		{
-			//does nothing
-		}
-
-		template <typename T>
-		void resolve(T v)
-		{
-			T *value = memory_pool->allocate<T>();
-			*value = v;
-			State* state = memory_pool->allocate<ResolvedState<T>, T*>(value);
-			_prom->_resolve(state);
-		}
-
-		void reject(std::exception e)
-		{
-			State* state = memory_pool->allocate<RejectedState, std::exception>(e);
-			_prom->_reject(state);
-		}
-
-	private:
-		IPromise *_prom;
-	};
-
-	class SettlementLambda : public ILambda
-	{
-	public:
-		SettlementLambda(std::function<void(Settlement)> l)
-			: _lam(l)
-		{
-			//do nothing
-		}
-
-		virtual void call(IPromise *prom)
-		{
-			Settlement sett(prom);
-			_lam(sett);
-		}
-
-	private:
-		std::function<void(Settlement)> _lam;
-
-		virtual IPromise* call(State* stat)
-		{
-			return nullptr;
-		}
-	};
-
-	Promise* Reject(std::exception e)
-	{
-		State* state = memory_pool->allocate<RejectedState>(e);
+	Promise* Reject(const std::exception &e) {
+		State* state = memory_pool->allocate<RejectedState, const std::exception&>(e);
 
 		Promise* prom = memory_pool->allocate<Promise, State*>(state);
 
@@ -505,187 +516,103 @@ namespace Promises
 	}
 
 	template <typename T>
-	Promise* Resolve(T v)
-	{
+	Promise* Resolve(T v) {
 		T *value = memory_pool->allocate<T>();
 		*value = v;
-		State* state = memory_pool->allocate<ResolvedState<T>>(value);
+		State* state = memory_pool->allocate<ResolvedState<T>, T*>(value);
 
 		Promise* prom = memory_pool->allocate<Promise, State*>(state);
 
 		return prom;
 	}
 	
-
-	Promise* all(std::vector<Promise*> &promises)
-	{
-
-		Promise* continuation = nullptr;
-
-		//create the continuation promise as a user defined promise
-		//and begin going through the given list of promises
-
-		SettlementLambda* l = memory_pool->allocate<SettlementLambda>([&](Settlement settle) {
-			//create the list for results and an
-			//exceptin for rejected reason
-			std::vector<int> results;
-			std::exception reason;
-			Status statflag = Pending;
-
-			//lock for adding to list or creating the rejected reason
-			//using mutex instead of semaphore because we need
-			//ownership to be released when control exits scope
-			//not before the return statement.
-			std::mutex checkLock;
-
-			//create resolve and reject handles for the list
-			auto res = [&](int value) {
-				std::unique_lock<std::mutex> reslock(checkLock);
-
-				if (statflag == Pending)
-					results.push_back(value);
-
-				return Promises::Resolve<bool>(true);
-			};
-
-			auto rej = [&](std::exception e) {
-				std::unique_lock<std::mutex> rejlock(checkLock);
-
-				if (statflag == Pending)
-				{
-					reason = e;
-					statflag = Rejected;
-				}
-
-				return Promises::Reject(e);
-			};
-
-			//loop through the promises
-			for (int i = 0; i < promises.size(); ++i)
-				promises[i]->then<int>(res, rej);
-
-			while (statflag == Pending)
-			{
-				checkLock.lock();
-
-				if (results.size() >= promises.size())
-				{
-					settle.resolve<std::vector<int>>(results);
-					statflag = Resolved;
-				}
-
-				if (statflag == Rejected)
-					settle.reject(reason);
-
-				checkLock.unlock();
-			}
-		});
-
-		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l);
-		finisher.add_promise(continuation);
-
-		return continuation;
-	}
-
-	Promise* hash(std::map<std::string, Promises::Promise*> &promises)
-	{
-
-		Promise* continuation = nullptr;
-
-		//create the continuation promise as a user defined promise
-		//and begin going through the given list of promises
-
-		SettlementLambda* l = memory_pool->allocate<SettlementLambda>([&](Settlement settle) {
-			//create the map for results and an
-			//exceptin for rejected reason
-			std::map<std::string, int> results;
-			std::exception reason;
-			Status statflag = Pending;
-
-			//still using our synchronization mechanisms because internally
-			//a map is a red-black tree, so the system can potentially
-			//look at same memory location to place a key-value pair.
-
-			//may not need synchronization methods actually because
-			//apparently all STL containers, such as a map, are required
-			//to be thread safe by C++ docs.
-			std::mutex checkLock;
-
-			//loop through the promises
-			for (auto it = promises.begin(); it != promises.end(); it++)
-			{
-				it->second->then<int>([&](int value) {
-
-					std::unique_lock<std::mutex> reslock(checkLock);
-
-					if (statflag == Pending)
-						results.insert(std::pair<std::string, int>(it->first, value));
-
-					return Promises::Resolve<bool>(true); }, [&](std::exception e) {
-
-						std::unique_lock<std::mutex> rejlock(checkLock);
-
-						if (statflag == Pending)
-						{
-							reason = e;
-							statflag = Rejected;
-						}
-
-						return Promises::Reject(e); });
-			}
-
-			while (statflag == Pending)
-			{
-				checkLock.lock();
-
-				if (results.size() >= promises.size())
-				{
-					settle.resolve<std::map<std::string, int>>(results);
-					statflag = Resolved;
-				}
-
-				if (statflag == Rejected)
-					settle.reject(reason);
-
-				checkLock.unlock();
-			}
-		});
-
-		continuation = memory_pool->allocate<Promise, SettlementLambda*>(l);
-		finisher.add_promise(continuation);
-
-		return continuation;
-	}
-
-
 	//await - suspend execution until the given promise is settled.
 	//If promise failed, the reject reason is thrown.
 	template <typename T>
 	T* await(IPromise* prom) {
 		prom->Join();
-		State* s = prom->getState();
+		State* s = prom->get_state();
+		
+		T* value = nullptr;
 
-		if (*s == Rejected) {
-			throw s->getReason();
+		if (s != nullptr && *s == Rejected) {
+			const std::exception &e = s->get_reason();
+			throw Promises::Promise_Error(e.what());
+		} else if (s != nullptr && *s == Resolved) {
+			value = (T*)s->get_value();
 		}
-
-		T* value = (T*)s->getValue();
+		
 		return value;
 	}
 
+	template<typename COMMONTYPE>
+	Promise* all(std::vector<IPromise*> &promises) {
+
+		Promise* continuation = nullptr;
+
+		ILambda* lam = create_settlement_lambda([&promises](Settlement settle) {
+			//create the list for results
+			std::vector<COMMONTYPE> results;
+
+			//loop through the promises
+			size_t i = 0;
+			for (i = 0; i < promises.size(); ++i) {
+				try {
+					COMMONTYPE* value = await<COMMONTYPE>(promises[i]);
+					results.push_back(*value);
+				} catch (const std::exception &ex) {
+					settle.reject(Promise_Error(ex.what()));
+					i = promises.size()+1;
+				}
+			}
+			
+			if (i < (promises.size()+1)) {
+				settle.resolve<std::vector<COMMONTYPE>>(results);
+			}
+		});
+
+		continuation = memory_pool->allocate<Promise, ILambda*>(lam);
+
+		return continuation;
+	}
+
+	template<typename KEYTYPE, typename COMMONTYPE>
+	Promise* hash(std::map<KEYTYPE, Promises::IPromise*> &promises) {
+
+		Promise* continuation = nullptr;
+
+		ILambda* lam = create_settlement_lambda([&promises](Settlement settle) {
+			std::map<KEYTYPE, COMMONTYPE> results;
+			bool early_termination = false;
+			
+			//loop through the promises
+			for (auto it = promises.begin(); it != promises.end(); it++) {
+				try {
+					COMMONTYPE* value = await<COMMONTYPE>(it->second);
+					results.insert(std::pair<KEYTYPE, COMMONTYPE>(it->first, *value));
+				} catch (const std::exception &ex) {
+					settle.reject(Promise_Error(ex.what()));
+					it = promises.end();
+					it++;
+					early_termination = true;
+				}
+			}
+			
+			if (!early_termination) {
+				settle.resolve<std::map<KEYTYPE, COMMONTYPE>>(results);
+			}
+		});
+
+		continuation = memory_pool->allocate<Promise, ILambda*>(lam);
+
+		return continuation;
+	}
 } // namespace Promises
 
-Promises::Promise* promise(std::function<void(Promises::Settlement)> func)
-{
-	Promises::SettlementLambda *l = Promises::memory_pool->allocate<Promises::SettlementLambda, std::function<void(Promises::Settlement)>>(func);
-	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda*>(l);
-
-	Promises::finisher.add_promise(prom);
-
-	if (!Promises::exit_handle_created) {
-		std::atexit(Promises::fin);
-		Promises::exit_handle_created = true;
-	}
+template<typename LAMBDA>
+Promises::Promise* promise(LAMBDA handle) {
+	Promises::SettlementLambda<LAMBDA> *l = Promises::create_settlement_lambda<LAMBDA>(handle);
+	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda<LAMBDA>*>(l);
 
 	return prom;
 }

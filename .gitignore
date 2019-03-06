@@ -1,1 +1,6 @@
 promisepp/
+
+Makefile
+Makefile.Promises
+Tests/Makefile
+Tests/Makefile.Tests
