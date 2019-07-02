@@ -1,5 +1,4 @@
-promisepp/
-
+.vscode
 Makefile
 Makefile.Promises
 Tests/Makefile
