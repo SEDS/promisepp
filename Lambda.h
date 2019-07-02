@@ -5,14 +5,7 @@
 #define LAMBDA_H
 
 namespace Promises {
-	class ILambda {
-	public:
-		virtual ~ILambda(void) {}
-		virtual void call(IPromise* prom) = 0;
-		virtual IPromise* call(State* stat) = 0;
-	};
-	
-	    //lambda traits was modified and influenced from
+	//lambda traits was modified and influenced from
     //https://stackoverflow.com/questions/7943525/is-it-possible-to-figure-out-the-parameter-type-and-return-type-of-a-lambda
     template<typename LAMBDA>
     struct lambda_traits : public lambda_traits<decltype(&LAMBDA::operator())>
@@ -44,14 +37,14 @@ namespace Promises {
     struct Chain {
 
         template<typename LAMBDA, typename T>
-        IPromise* chain (LAMBDA lam, T &value) {
-			IPromise* prom = lam(value);
+        std::shared_ptr<IPromise> chain (LAMBDA lam, T &value) {
+			std::shared_ptr<IPromise> prom = lam(value);
             return prom;
         }
 
 		template<typename LAMBDA>
-		IPromise* chain (LAMBDA lam) {
-			IPromise* prom = lam();
+		std::shared_ptr<IPromise> chain (LAMBDA lam) {
+			std::shared_ptr<IPromise> prom = lam();
             return prom;
         }
     };
@@ -60,17 +53,24 @@ namespace Promises {
     struct Chain <void> {
 
         template<typename LAMBDA, typename T>
-        IPromise* chain (LAMBDA lam, T &value) {
+        std::shared_ptr<IPromise> chain (LAMBDA lam, T &value) {
 			lam(value);
             return nullptr;
         }
 
 		template<typename LAMBDA>
-		IPromise* chain (LAMBDA lam) {
+		std::shared_ptr<IPromise> chain (LAMBDA lam) {
 			lam();
             return nullptr;
         }
     };
+
+	class ILambda {
+	public:
+		virtual ~ILambda(void) {}
+		virtual void call(IPromise* prom) = 0;
+		virtual std::shared_ptr<IPromise> call(std::shared_ptr<State> stat) = 0;
+	};
 
 	template<typename LAMBDA>
 	class RejectedLambda : public ILambda {
@@ -79,7 +79,18 @@ namespace Promises {
 			: _lam(l)
 		{ }
 
-		virtual IPromise* call(State* stat) {
+		RejectedLambda(const RejectedLambda<LAMBDA> &other)
+			:_lam(other._lam)
+		{ }
+
+		~RejectedLambda(void) { }
+
+		RejectedLambda<LAMBDA>& operator = (const RejectedLambda<LAMBDA> &other) {
+			this->_lam = other._lam;
+			return (*this);
+		}
+
+		virtual std::shared_ptr<IPromise> call(std::shared_ptr<State> stat) {
 			if (stat == NULL | stat == nullptr) {
 				throw std::logic_error("RejectedLambda.call(): state is null");
 			}
@@ -87,7 +98,7 @@ namespace Promises {
 			typedef typename lambda_if_not_void<LAMBDA>::type chain_type;
 			Chain<chain_type> chainer;
 			const std::exception& reason = stat->get_reason();
-			IPromise* p = chainer.template chain<LAMBDA, const std::exception>(_lam, reason);
+			std::shared_ptr<IPromise> p = chainer.template chain<LAMBDA, const std::exception>(_lam, reason);
 
 			return p;
 		}
@@ -105,7 +116,18 @@ namespace Promises {
 			: _lam(l)
 		{ }
 
-		virtual IPromise* call(State* stat) {
+		ResolvedLambda(const ResolvedLambda<LAMBDA> &other)
+			:_lam(other._lam)
+		{ }
+
+		~ResolvedLambda(void) { }
+
+		ResolvedLambda<LAMBDA>& operator = (const ResolvedLambda<LAMBDA> &other) {
+			this->_lam = other._lam;
+			return (*this);
+		}
+
+		virtual std::shared_ptr<IPromise> call(std::shared_ptr<State> stat) {
 			if (stat == NULL | stat == nullptr) {
 				throw std::logic_error("ResolvedLambda.call(): state is null");
 			}
@@ -114,7 +136,7 @@ namespace Promises {
 			typedef typename lambda_traits<LAMBDA>::arg_type arg_type;
 			Chain<chain_type> chainer;
 			arg_type *value = (arg_type *)stat->get_value();
-			IPromise* p = chainer.template chain<LAMBDA, arg_type>(_lam, *value);
+			std::shared_ptr<IPromise> p = chainer.template chain<LAMBDA, arg_type>(_lam, *value);
 
 			return p;
 		}
@@ -124,18 +146,6 @@ namespace Promises {
 
 		virtual void call(IPromise* prom) { }
 	};
-}
-
-template<typename LAMBDA>
-Promises::RejectedLambda<LAMBDA>* rejected_lambda(LAMBDA lam) {
-	Promises::RejectedLambda<LAMBDA>* rejlam = new Promises::RejectedLambda<LAMBDA>(lam);
-	return rejlam;
-}
-
-template<typename LAMBDA>
-Promises::ResolvedLambda<LAMBDA>* resolved_lambda(LAMBDA lam) {
-	Promises::ResolvedLambda<LAMBDA>* reslam = new Promises::ResolvedLambda<LAMBDA>(lam);
-	return reslam;
 }
 
 #endif // !LAMBDA_H

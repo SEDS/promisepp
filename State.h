@@ -44,7 +44,7 @@ namespace Promises {
 			return (*this) != state._status;
 		}
 
-		virtual void *get_value(void) = 0;
+		virtual void* get_value(void) = 0;
 		virtual const std::exception& get_reason(void) = 0;
 
 	private:
@@ -54,6 +54,16 @@ namespace Promises {
 	//PendingState is a struct because it has
 	//nothing to be private or protected
 	struct PendingState : public State {
+		PendingState(void)
+		{ }
+
+		PendingState(const PendingState &other)
+			:State(other)
+		{ }
+
+		~PendingState(void)
+		{ }
+		
 		virtual void* get_value(void) {
 			return nullptr;
 		}
@@ -71,8 +81,6 @@ namespace Promises {
 		}
 	};
 
-	static PendingState pending_state;
-
 	template <typename T>
 	class ResolvedState : public State {
 	public:
@@ -80,26 +88,22 @@ namespace Promises {
 			: _value(nullptr)
 		{ }
 
-		ResolvedState(T *v)
+		ResolvedState(T v)
 			: State(Resolved),
 			_value(v)
 		{ }
 
-		ResolvedState(ResolvedState &state)
+		ResolvedState(const ResolvedState &state)
 			: State(state),
 			_value(state._value)
 		{
-			state._value = nullptr;
+			// state._value = nullptr;
 		}
 
-		virtual ~ResolvedState(void) {
-			if(_value != nullptr) {
-				delete _value;
-			}
-		}
+		virtual ~ResolvedState(void) { }
 
 		virtual void* get_value(void) {
-			return _value;
+			return &_value;
 		}
 		
 		virtual const std::exception& get_reason(void) {
@@ -115,7 +119,7 @@ namespace Promises {
 		}
 
 	private:
-		T* _value;
+		T _value;
 	};
 
 	class RejectedState : public State {
@@ -165,7 +169,6 @@ namespace Promises {
 	private:
 		Promise_Error _reason;
 	};
-
 }
 
 #endif // !STATE_H
