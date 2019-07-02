@@ -1,9 +1,9 @@
 #ifndef PROMISE_H
 #define PROMISE_H
+#define ARENA_SIZE 256
 
 #include "IPromise.h"
 #include "Lambda.h"
-#include "Pool.h"
 #include "State.h"
 #include <functional>
 #include <stdexcept>
@@ -15,17 +15,28 @@
 #include <mutex>
 #include <iterator>
 #include <map>
-#include <iostream>
 #include <cstdlib>
 #include <type_traits>
+#include <iostream>
 
 namespace Promises {
 
-	static int _promiseID = 0;
+static std::shared_ptr<PendingState> pending_state = std::make_shared<PendingState>();
 
-	//init the memory pool as a unique ptr so it will be destructed once program terminates
-	static std::unique_ptr<Promises::Pool> memory_pool(Promises::Pool::Instance());
+	template<typename LAMBDA>
+	std::shared_ptr<RejectedLambda<LAMBDA>> rejected_lambda(LAMBDA lam) {
+		std::shared_ptr<RejectedLambda<LAMBDA>> rejlam = std::make_shared<RejectedLambda<LAMBDA>>(lam);
+		
+		return rejlam;
+	}
 
+	template<typename LAMBDA>
+	std::shared_ptr<ResolvedLambda<LAMBDA>> resolved_lambda(LAMBDA lam) {
+		std::shared_ptr<ResolvedLambda<LAMBDA>> reslam = std::make_shared<ResolvedLambda<LAMBDA>>(lam);
+
+		return reslam;
+	}
+	
 	class Settlement {
 	public:
 		Settlement(IPromise* p)
@@ -38,15 +49,19 @@ namespace Promises {
 
 		~Settlement(void) { }
 
+		Settlement& operator = (const Settlement &settle) {
+			this->_prom = settle._prom;
+			return (*this);
+		}
+
 		template <typename T>
-		void resolve(T v) {
+		void resolve(T value) {
 			if (_prom == NULL || _prom == nullptr) {
 				throw Promise_Error("Settlement.resolve(): internal promise is null");
 			}
+			
+			std::shared_ptr<ResolvedState<T>> state = std::make_shared<ResolvedState<T>>(value);
 
-			T *value = memory_pool->allocate<T>();
-			*value = v;
-			State* state = memory_pool->allocate<ResolvedState<T>, T*>(value);
 			_prom->_resolve(state);
 		}
 
@@ -55,7 +70,8 @@ namespace Promises {
 				throw Promise_Error("Settlement.reject(): internal promise is null");
 			}
 
-			State* state = memory_pool->allocate<RejectedState, const std::exception&>(e);
+			std::shared_ptr<RejectedState> state = std::make_shared<RejectedState>(e);
+
 			_prom->_reject(state);
 		}
 		
@@ -64,7 +80,8 @@ namespace Promises {
 				throw Promise_Error("Settlement.reject(): internal promise is null");
 			}
 
-			State* state = memory_pool->allocate<RejectedState, const std::string&>(msg);
+			std::shared_ptr<RejectedState> state = std::make_shared<RejectedState>(msg);
+
 			_prom->_reject(state);
 		}
 
@@ -87,28 +104,35 @@ namespace Promises {
 	private:
 		LAMBDA _lam;
 
-		virtual IPromise* call(State* stat) {
+		virtual std::shared_ptr<IPromise> call(std::shared_ptr<State> stat) {
 			return nullptr;
 		}
 	};
 
+	template<typename LAMBDA>
+	std::shared_ptr<SettlementLambda<LAMBDA>> settlement_lambda(LAMBDA handler) {
+		std::shared_ptr<SettlementLambda<LAMBDA>> settlam = std::make_shared<SettlementLambda<LAMBDA>>(handler);
+
+		return settlam;
+	}
+
 	//NoArg Promise and Lambda
 	//used only for Promise.finally()
-	class NoArgPromise : public IPromise {
+	class NoArgPromise : public IPromise {		
 		public:
-			NoArgPromise(State* state)
+			NoArgPromise(std::shared_ptr<State> state)
 				:_state(state)
 			{ }
 
 			virtual ~NoArgPromise(void) {}
 
-			virtual State* get_state(void) {
+			virtual std::shared_ptr<State> get_state(void) {
 				return _state;
 			}
 		private:
-			State* _state;
-			virtual void _resolve(State* state) { }
-			virtual void _reject(State* state) { }
+			std::shared_ptr<State> _state;
+			virtual void _resolve(std::shared_ptr<State> state) { }
+			virtual void _reject(std::shared_ptr<State> state) { }
 			virtual void Join(void) { }
 	};
 	
@@ -119,10 +143,10 @@ namespace Promises {
 			: _lam(l)
 		{ }
 
-		virtual IPromise* call(State* stat) {			
+		virtual std::shared_ptr<IPromise> call(std::shared_ptr<State> stat) {			
 			_lam();
 			//The state needs to bubble downstream
-			NoArgPromise* prom = memory_pool->allocate<NoArgPromise>(stat);
+			std::shared_ptr<NoArgPromise> prom = std::make_shared<NoArgPromise>(stat);
 			return prom;
 		}
 
@@ -131,12 +155,12 @@ namespace Promises {
 
 		virtual void call(IPromise* prom) { }
 	};
-	
+
 	template<typename LAMBDA>
-	SettlementLambda<LAMBDA>* create_settlement_lambda(LAMBDA handler) {
-		SettlementLambda<LAMBDA>* lam = nullptr;
-		lam = memory_pool->allocate<SettlementLambda<LAMBDA>>(handler);
-		return lam;
+	std::shared_ptr<NoArgLambda<LAMBDA>> noarg_lambda(LAMBDA handler) {
+		std::shared_ptr<NoArgLambda<LAMBDA>> noarglam = std::make_shared<NoArgLambda<LAMBDA>>(handler);
+		
+		return noarglam;
 	}
 	
 	class Semaphore {
@@ -176,184 +200,40 @@ namespace Promises {
 	};
 
 	class Promise : public IPromise {
-	
-		//pool is friend because
-		//it has to be able to use the private constructors
-		friend class Pool;
 
 		template <typename T>
-		friend T* await(IPromise*);
+		friend T* await(std::shared_ptr<IPromise>);
 
 	public:
 		Promise(void)
-			: _id(std::to_string(_promiseID + 1)),
-			_state(nullptr),
+			:_state(nullptr),
 			_settleHandle(nullptr),
 			_resolveHandle(nullptr),
 			_rejectHandle(nullptr)
-		{
-			++_promiseID;
-		}
+		{ }
 
-		Promise(ILambda* lam)
-			: _id(std::to_string(_promiseID + 1)),
-			_state(&pending_state),
+		Promise(std::shared_ptr<State> stat)
+			:_state(stat),
+			_settleHandle(nullptr),
+			_resolveHandle(nullptr),
+			_rejectHandle(nullptr)
+		{ }
+
+		Promise(std::shared_ptr<ILambda> lam)
+			:_state(pending_state),
 			_settleHandle(lam),
 			_resolveHandle(nullptr),
 			_rejectHandle(nullptr)
 		{
-			++_promiseID;
 			_settle();
 		}
 
-		virtual ~Promise(void) {
-			try {
-
-				_th.join();
-			} catch (const std::exception &e) {
-				//suppress a thread join in destructor
-				//because join potentially throws exception
-				//and that's not allowed in destructors because
-				//a thrown exception can stop the de-allocation
-				//of further memory.
-			}
-		}
-
-		template <typename RESLAM, typename REJLAM>
-		Promise* then(RESLAM resolver, REJLAM rejecter) {
-			if (_state == NULL || _state == nullptr) {
-				throw Promise_Error("Promise.then(): state is null");
-			}
-
-			Promise* continuation = nullptr;
-			ILambda* reslam = nullptr;
-			ILambda* rejlam = nullptr;
-
-			//this check is necessary so the proper nullptr's are passed into continuation promise
-			reslam = memory_pool->allocate<ResolvedLambda<RESLAM>>(resolver);
-			rejlam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
-
-			_stateLock.lock();
-
-			if (*_state == Pending) {
-				continuation = memory_pool->allocate<Promise>(reslam, rejlam);
-				_Promises.push_back(continuation);
-			} else if (*_state == Resolved) {
-				continuation = memory_pool->allocate<Promise>(reslam, this->_state);
-			} else {
-				continuation = memory_pool->allocate<Promise>(rejlam, this->_state);
-			}
-
-			_stateLock.unlock();
-
-			return continuation;
-		}
-		
-		template <typename LAMBDA>
-		Promise* then(LAMBDA resolver) {
-			if (_state == NULL || _state == nullptr) {
-				throw Promise_Error("Promise.then(): state is null");
-			}
-
-			Promise* continuation = nullptr;
-			ILambda* lam = nullptr;
-			
-			_stateLock.lock();
-
-			if (*_state == Pending) {
-				lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(resolver);
-				ILambda* fake = nullptr;
-				continuation = memory_pool->allocate<Promise>(lam, fake);
-				_Promises.push_back(continuation);
-			} else if (*_state == Resolved) {
-				lam = memory_pool->allocate<ResolvedLambda<LAMBDA>>(resolver);
-				continuation = memory_pool->allocate<Promise>(lam, this->_state);
-			} else {
-				ILambda* fake = nullptr;
-				continuation = memory_pool->allocate<Promise>(fake, this->_state);
-			}
-
-			_stateLock.unlock();
-
-			return continuation;
-		}
-	
-		template<typename REJLAM>
-		Promise* _catch(REJLAM rejecter) {
-			if (_state == NULL || _state == nullptr) {
-				throw Promise_Error("Promise.catch(): state is null");
-			}
-
-			Promise* continuation = nullptr;
-			ILambda* lam = nullptr;
-						
-			_stateLock.lock();
-			if (*_state == Pending) {
-				ILambda* fake = nullptr;
-				lam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
-				continuation = memory_pool->allocate<Promise>(fake, lam);
-				_Promises.push_back(continuation);
-			} else if (*_state == Resolved) {
-				ILambda* fake = nullptr;
-				continuation = memory_pool->allocate<Promise>(fake, this->_state);
-			} else {
-				lam = memory_pool->allocate<RejectedLambda<REJLAM>>(rejecter);
-				continuation = memory_pool->allocate<Promise>(lam, this->_state);
-			}
-
-			_stateLock.unlock();
-
-			return continuation;
-		}
-
-		template <typename LAMBDA>
-		Promise* finally(LAMBDA handler) {
-			if (_state == NULL || _state == nullptr) {
-				throw Promise_Error("Promise.finally(): state is null");
-			}
-
-			Promise* continuation = nullptr;
-			ILambda* lam = memory_pool->allocate<NoArgLambda<LAMBDA>>(handler);
-
-			_stateLock.lock();
-
-			if (*_state == Pending) {
-				ILambda* aux = memory_pool->allocate<NoArgLambda<LAMBDA>>(handler);
-				continuation = memory_pool->allocate<Promise, ILambda*, ILambda*>(lam, aux);
-				_Promises.push_back(continuation);
-			} else {
-				continuation = memory_pool->allocate<Promise, ILambda*, State*>(lam, this->_state);
-			}
-
-			_stateLock.unlock();
-
-			return continuation;
-		}
-
-		virtual State* get_state(void) {
-			return this->_state;
-		}
-
-	private:
-		Promise(State* stat)
-			: _id(std::to_string(_promiseID + 1)),
-			_state(stat),
+		Promise(std::shared_ptr<ILambda> lam, std::shared_ptr<State> parentState)
+			:_state(pending_state),
 			_settleHandle(nullptr),
 			_resolveHandle(nullptr),
 			_rejectHandle(nullptr)
 		{
-			++_promiseID;
-		}
-
-		Promise(ILambda* lam, State* parentState)
-			: _id(std::to_string(_promiseID + 1)),
-			_state(&pending_state),
-			_settleHandle(nullptr),
-			_resolveHandle(nullptr),
-			_rejectHandle(nullptr)
-		{
-			++_promiseID;
-
 			if (*parentState == Resolved) {
 				_resolveHandle = lam;
 				this->_settle(parentState, nullptr);
@@ -363,39 +243,178 @@ namespace Promises {
 			}
 		}
 
-		Promise(ILambda* res, ILambda* rej)
-			: _id(std::to_string(_promiseID + 1)),
-			_state(&pending_state),
+		Promise(std::shared_ptr<ILambda> res, std::shared_ptr<ILambda> rej)
+			:_state(pending_state),
 			_settleHandle(nullptr),
 			_resolveHandle(res),
 			_rejectHandle(rej)
-		{
-			++_promiseID;
+		{ }
+
+		Promise(const Promise &other)
+			:_state(other._state),
+			_settleHandle(other._settleHandle),
+			_resolveHandle(other._resolveHandle),
+			_rejectHandle(other._rejectHandle),
+			_Promises(other._Promises)
+		{ }
+
+		virtual ~Promise(void) {
+			try {
+				if (this->_th.joinable()) {
+					this->_th.join();
+				}
+			} catch (const std::exception &ex) {
+				std::cout << ex.what() << std::endl;
+			}
 		}
 
-		std::string _id;
-		State* _state;
-		ILambda* _settleHandle;
-		ILambda* _resolveHandle;
-		ILambda* _rejectHandle;
+		Promise& operator = (const Promise &other) {
+			this->_state = other._state;
+			this->_settleHandle = other._settleHandle;
+			this->_resolveHandle = other._resolveHandle;
+			this->_rejectHandle = other._rejectHandle;
+			this->_Promises = 	other._Promises;
+
+			return (*this);
+		}
+
+		template <typename RESLAM, typename REJLAM>
+		std::shared_ptr<Promise> then(RESLAM resolver, REJLAM rejecter) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.then(): state is null");
+			}
+
+			std::shared_ptr<Promise> continuation = nullptr;
+			std::shared_ptr<ILambda> reslam = nullptr;
+			std::shared_ptr<ILambda> rejlam = nullptr;
+
+			_stateLock.lock();
+
+			if (*_state == Pending) {
+				reslam = resolved_lambda<RESLAM>(resolver);
+				rejlam = rejected_lambda<REJLAM>(rejecter);
+				continuation = std::make_shared<Promise>(reslam, rejlam);
+				_Promises.push_back(continuation);
+			} else if (*_state == Resolved) {
+				reslam = resolved_lambda<RESLAM>(resolver);
+				continuation = std::make_shared<Promise>(reslam, this->_state);
+			} else {
+				rejlam = rejected_lambda<REJLAM>(rejecter);
+				continuation = std::make_shared<Promise>(rejlam, this->_state);
+			}
+
+			_stateLock.unlock();
+
+			return continuation;
+		}
+		
+		template <typename LAMBDA>
+		std::shared_ptr<Promise> then(LAMBDA resolver) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.then(): state is null");
+			}
+
+			std::shared_ptr<Promise> continuation = nullptr;
+			std::shared_ptr<ILambda> lam = nullptr;
+			
+			_stateLock.lock();
+
+			if (*_state == Pending) {
+				std::shared_ptr<ILambda> fake = nullptr;
+				lam = resolved_lambda<LAMBDA>(resolver);
+				continuation = std::make_shared<Promise>(lam, fake);
+				_Promises.push_back(continuation);
+			} else if (*_state == Resolved) {
+				lam = resolved_lambda<LAMBDA>(resolver);
+				continuation = std::make_shared<Promise>(lam, this->_state);
+			} else {
+				std::shared_ptr<ILambda> fake = nullptr;
+				continuation = std::make_shared<Promise>(fake, this->_state);
+			}
+
+			_stateLock.unlock();
+
+			return continuation;
+		}
+	
+		template<typename REJLAM>
+		std::shared_ptr<Promise> _catch(REJLAM rejecter) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.catch(): state is null");
+			}
+
+			std::shared_ptr<Promise> continuation = nullptr;
+			std::shared_ptr<ILambda> lam = nullptr;
+						
+			_stateLock.lock();
+			if (*_state == Pending) {
+				std::shared_ptr<ILambda> fake = nullptr;
+				lam = rejected_lambda<REJLAM>(rejecter);
+				continuation = std::make_shared<Promise>(fake, lam);
+				_Promises.push_back(continuation);
+			} else if (*_state == Resolved) {
+				std::shared_ptr<ILambda> fake = nullptr;
+				continuation = std::make_shared<Promise>(fake, this->_state);
+			} else {
+				lam = rejected_lambda<REJLAM>(rejecter);
+				continuation = std::make_shared<Promise>(lam, this->_state);
+			}
+
+			_stateLock.unlock();
+
+			return continuation;
+		}
+
+		template <typename LAMBDA>
+		std::shared_ptr<Promise> finally(LAMBDA handler) {
+			if (_state == NULL || _state == nullptr) {
+				throw Promise_Error("Promise.finally(): state is null");
+			}
+
+			std::shared_ptr<Promise> continuation = nullptr;
+			std::shared_ptr<ILambda> lam = noarg_lambda<LAMBDA>(handler);
+
+			_stateLock.lock();
+
+			if (*_state == Pending) {
+				std::shared_ptr<ILambda> aux = noarg_lambda<LAMBDA>(handler);
+				continuation = std::make_shared<Promise>(lam, aux);
+				_Promises.push_back(continuation);
+			} else {
+				continuation = std::make_shared<Promise>(lam, this->_state);
+			}
+
+			_stateLock.unlock();
+
+			return continuation;
+		}
+
+		virtual std::shared_ptr<State> get_state(void) {
+			return this->_state;
+		}
+
+	private:
+		std::shared_ptr<State> _state;
+		std::shared_ptr<ILambda> _settleHandle;
+		std::shared_ptr<ILambda> _resolveHandle;
+		std::shared_ptr<ILambda> _rejectHandle;
 		Semaphore _semp;
 		std::mutex _stateLock;
 		std::thread _th;
-		std::vector<Promise*> _Promises;
+		std::vector<std::shared_ptr<Promise>> _Promises;
 
-		virtual void _resolve(State* state) {
+		virtual void _resolve(std::shared_ptr<State> state) {
 			_stateLock.lock();
 			_state = state;
 			_stateLock.unlock();
 
 			_semp.increase();
-
 			for (size_t i = 0; i < _Promises.size(); i++) {
 				_Promises[i]->_settle(_state, nullptr);
 			}
 		}
 
-		virtual void _reject(State* state) {
+		virtual void _reject(std::shared_ptr<State> state) {
 			_stateLock.lock();
 			_state = state;
 			_stateLock.unlock();
@@ -424,17 +443,17 @@ namespace Promises {
 			_settleHandle->call(this);
 		}
 
-		void _withResolveHandle(State* input) {
+		void _withResolveHandle(std::shared_ptr<State> input) {
 			//surround this in a try block
 			//so if an exception happens, then the promise is rejected instead.
 
 			//we need 2 seperate functions between this and _withRejectHandle
 			//because we need to call two different
-			IPromise* parent = _resolveHandle->call(input);
+			std::shared_ptr<IPromise> parent = _resolveHandle->call(input);
 			
 			//parent will only be nullptr on chain end
 			if(parent != nullptr) {
-				State* state = parent->get_state();
+				std::shared_ptr<State> state = parent->get_state();
 
 				//if the resolve handle succeeds, the the promise chain
 				//is stil continuing with successful runs
@@ -451,14 +470,14 @@ namespace Promises {
 			}
 		}
 
-		void _withRejectHandle(State* input) {
+		void _withRejectHandle(std::shared_ptr<State> input) {
 			//surroung this in a try block
 			//so if an exception happens, then the promise is rejected instead.
-			IPromise* parent = _rejectHandle->call(input);
+			std::shared_ptr<IPromise> parent = _rejectHandle->call(input);
 			
 			//parent will only be nullptr on chain end
 			if(parent != nullptr) {
-				State* state = parent->get_state();
+				std::shared_ptr<State> state = parent->get_state();
 
 				//if the resolve handle succeeds, the the promise chain
 				//is stil continuing with successful runs
@@ -479,7 +498,7 @@ namespace Promises {
 			_th = std::thread(&Promise::_withSettleHandle, this);
 		}
 
-		void _settle(State* withValue, State* withReason) {
+		void _settle(std::shared_ptr<State> withValue, std::shared_ptr<State> withReason) {
 			if (withValue != nullptr) {
 				//run resolveHandle if this promise has one
 				if (_resolveHandle != nullptr) {
@@ -506,22 +525,20 @@ namespace Promises {
 			}
 		}
 	};
+	
+	typedef std::shared_ptr<Promise> PROM_TYPE;
 
-	Promise* Reject(const std::exception &e) {
-		State* state = memory_pool->allocate<RejectedState, const std::exception&>(e);
-
-		Promise* prom = memory_pool->allocate<Promise, State*>(state);
+	std::shared_ptr<Promise> Reject(const std::exception &e) {
+		std::shared_ptr<RejectedState> state = std::make_shared<RejectedState>(e);
+		std::shared_ptr<Promise> prom = std::make_shared<Promise>(state);
 
 		return prom;
 	}
 
 	template <typename T>
-	Promise* Resolve(T v) {
-		T *value = memory_pool->allocate<T>();
-		*value = v;
-		State* state = memory_pool->allocate<ResolvedState<T>, T*>(value);
-
-		Promise* prom = memory_pool->allocate<Promise, State*>(state);
+	std::shared_ptr<Promise> Resolve(T value) {
+		std::shared_ptr<ResolvedState<T>> state = std::make_shared<ResolvedState<T>>(value);
+		std::shared_ptr<Promise> prom = std::make_shared<Promise>(state);
 
 		return prom;
 	}
@@ -529,9 +546,9 @@ namespace Promises {
 	//await - suspend execution until the given promise is settled.
 	//If promise failed, the reject reason is thrown.
 	template <typename T>
-	T* await(IPromise* prom) {
+	T* await(IPROM_TYPE prom) {
 		prom->Join();
-		State* s = prom->get_state();
+		std::shared_ptr<State> s = prom->get_state();
 		
 		T* value = nullptr;
 
@@ -546,11 +563,11 @@ namespace Promises {
 	}
 
 	template<typename COMMONTYPE>
-	Promise* all(std::vector<IPromise*> &promises) {
+	std::shared_ptr<Promise> all(std::vector<PROM_TYPE> &promises) {
 
-		Promise* continuation = nullptr;
+		std::shared_ptr<Promise> continuation = nullptr;
 
-		ILambda* lam = create_settlement_lambda([&promises](Settlement settle) {
+		std::shared_ptr<ILambda> lam = settlement_lambda([&promises](Settlement settle) {
 			//create the list for results
 			std::vector<COMMONTYPE> results;
 
@@ -571,17 +588,17 @@ namespace Promises {
 			}
 		});
 
-		continuation = memory_pool->allocate<Promise, ILambda*>(lam);
+		continuation = std::make_shared<Promise>(lam);
 
 		return continuation;
 	}
 
 	template<typename KEYTYPE, typename COMMONTYPE>
-	Promise* hash(std::map<KEYTYPE, Promises::IPromise*> &promises) {
+	std::shared_ptr<Promise> hash(std::map<KEYTYPE, PROM_TYPE> &promises) {
 
-		Promise* continuation = nullptr;
+		std::shared_ptr<Promise> continuation = nullptr;
 
-		ILambda* lam = create_settlement_lambda([&promises](Settlement settle) {
+		std::shared_ptr<ILambda> lam = settlement_lambda([&promises](Settlement settle) {
 			std::map<KEYTYPE, COMMONTYPE> results;
 			bool early_termination = false;
 			
@@ -603,16 +620,18 @@ namespace Promises {
 			}
 		});
 
-		continuation = memory_pool->allocate<Promise, ILambda*>(lam);
+		continuation = std::make_shared<Promise>(lam);
 
 		return continuation;
 	}
+
+	typedef std::shared_ptr<Promise> PROMTYPE;
 } // namespace Promises
 
 template<typename LAMBDA>
-Promises::Promise* promise(LAMBDA handle) {
-	Promises::SettlementLambda<LAMBDA> *l = Promises::create_settlement_lambda<LAMBDA>(handle);
-	Promises::Promise *prom = Promises::memory_pool->allocate<Promises::Promise, Promises::SettlementLambda<LAMBDA>*>(l);
+std::shared_ptr<Promises::Promise> promise(LAMBDA handle) {
+	std::shared_ptr<Promises::ILambda> l = Promises::settlement_lambda<LAMBDA>(handle);
+	std::shared_ptr<Promises::Promise> prom = std::make_shared<Promises::Promise>(l);
 
 	return prom;
 }
