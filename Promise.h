@@ -22,20 +22,6 @@
 namespace Promises {
 
 static std::shared_ptr<PendingState> pending_state = std::make_shared<PendingState>();
-
-	template<typename LAMBDA>
-	std::shared_ptr<RejectedLambda<LAMBDA>> rejected_lambda(LAMBDA lam) {
-		std::shared_ptr<RejectedLambda<LAMBDA>> rejlam = std::make_shared<RejectedLambda<LAMBDA>>(lam);
-		
-		return rejlam;
-	}
-
-	template<typename LAMBDA>
-	std::shared_ptr<ResolvedLambda<LAMBDA>> resolved_lambda(LAMBDA lam) {
-		std::shared_ptr<ResolvedLambda<LAMBDA>> reslam = std::make_shared<ResolvedLambda<LAMBDA>>(lam);
-
-		return reslam;
-	}
 	
 	class Settlement {
 	public:

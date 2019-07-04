@@ -1,4 +1,5 @@
 #include "Promise_Error.h"
+#include <memory>
 
 #ifndef STATE_H
 #define STATE_H
@@ -51,6 +52,8 @@ namespace Promises {
 		Status _status;
 	};
 
+	typedef std::shared_ptr<State> STATE_TYPE;
+
 	//PendingState is a struct because it has
 	//nothing to be private or protected
 	struct PendingState : public State {
@@ -85,7 +88,6 @@ namespace Promises {
 	class ResolvedState : public State {
 	public:
 		ResolvedState(void)
-			: _value(nullptr)
 		{ }
 
 		ResolvedState(T v)

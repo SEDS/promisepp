@@ -11,17 +11,13 @@ project (Tests) {
 
     Header_Files {
         ../IPromise.h
-		../Pool.h
-        ../Slab_Allocator.h
-		../Promise_Error.h
-		../Promise.h
+        ../Promise_Error.h
+        ../Promise.h
         ../State.h
-		../Lambda.h
+        ../Lambda.h
     }
 
     Source_Files {
-		../Slab_Allocator.cpp
-        ../Pool.cpp
         Promise_Tests.cpp
         State_Tests.cpp
         Exception_Tests.cpp

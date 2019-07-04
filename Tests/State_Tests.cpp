@@ -10,7 +10,7 @@ BOOST_AUTO_TEST_CASE(Default_Constructor_Test) {
     Promises::ResolvedState<char> resolved;
 	Promises::RejectedState rejected;
 
-	BOOST_CHECK(resolved.get_value() == nullptr);
+	BOOST_CHECK(resolved.get_value() != nullptr);
     BOOST_CHECK(strcmp(resolved.get_reason().what(), Promises::noerr.what()) == 0);
 	
 	BOOST_CHECK(rejected.get_value() == nullptr);
@@ -25,10 +25,10 @@ BOOST_AUTO_TEST_CASE(Pending_Constructor_Test) {
 }
 
 BOOST_AUTO_TEST_CASE(Resolved_Constructor_Test) {
-	char* c = new char('$');
+	char c = '$';
     Promises::ResolvedState<char> resolved(c);
 	
-	BOOST_CHECK((char*)resolved.get_value() == c);
+	BOOST_CHECK(*((char*)resolved.get_value()) == c);
     BOOST_CHECK(strcmp(resolved.get_reason().what(), Promises::noerr.what()) == 0);
 }
 
@@ -48,14 +48,14 @@ BOOST_AUTO_TEST_CASE(Rejected_Constructor_Test) {
 }
 
 BOOST_AUTO_TEST_CASE(Copy_Constructor_Test) {
-	char* c = new char('$');
+	char c = '$';
     Promises::ResolvedState<char> resolved(c);
 	Promises::ResolvedState<char> copy_resolved(resolved);
 	
 	Promises::RejectedState rejected(std::logic_error("test"));
 	Promises::RejectedState copy_rejected(rejected);
 
-	BOOST_CHECK((char*)copy_resolved.get_value() == c);
+	BOOST_CHECK(*((char*)copy_resolved.get_value()) == c);
     BOOST_CHECK(strcmp(copy_resolved.get_reason().what(), resolved.get_reason().what()) == 0);
 	
 	BOOST_CHECK(copy_rejected.get_value() == rejected.get_value());
@@ -63,17 +63,17 @@ BOOST_AUTO_TEST_CASE(Copy_Constructor_Test) {
 }
 
 BOOST_AUTO_TEST_CASE(Destructor_Test) {
-	int* num = new int(10);
+	int num = 10;
     Promises::ResolvedState<int>* resolved = new Promises::ResolvedState<int>(num);
 	delete resolved;
 	
-	//delete integer sets integer to 0 value
-	BOOST_CHECK(*num == 0);
+	//integer still 10
+	BOOST_CHECK(num == 10);
 }
 
 BOOST_AUTO_TEST_CASE(Equality_Test) {
-	char* c = new char('$');
-	int* num = new int(10);
+	char c = '$';
+	int num = 10;
 
 	Promises::PendingState pending1;
 	Promises::PendingState pending2;
@@ -90,7 +90,7 @@ BOOST_AUTO_TEST_CASE(Equality_Test) {
 }
 
 BOOST_AUTO_TEST_CASE(Inequality_Test) {
-	char* c = new char('$');
+	char c = '$';
 	Promises::PendingState pending;
     Promises::ResolvedState<char> resolved(c);
 	Promises::RejectedState rejected(std::logic_error("test"));

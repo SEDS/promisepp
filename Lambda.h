@@ -72,6 +72,8 @@ namespace Promises {
 		virtual std::shared_ptr<IPromise> call(std::shared_ptr<State> stat) = 0;
 	};
 
+	typedef std::shared_ptr<ILambda> ILAM_TYPE;
+
 	template<typename LAMBDA>
 	class RejectedLambda : public ILambda {
 	public:
@@ -146,6 +148,20 @@ namespace Promises {
 
 		virtual void call(IPromise* prom) { }
 	};
+
+	template<typename LAMBDA>
+	std::shared_ptr<RejectedLambda<LAMBDA>> rejected_lambda(LAMBDA lam) {
+		std::shared_ptr<RejectedLambda<LAMBDA>> rejlam = std::make_shared<RejectedLambda<LAMBDA>>(lam);
+		
+		return rejlam;
+	}
+
+	template<typename LAMBDA>
+	std::shared_ptr<ResolvedLambda<LAMBDA>> resolved_lambda(LAMBDA lam) {
+		std::shared_ptr<ResolvedLambda<LAMBDA>> reslam = std::make_shared<ResolvedLambda<LAMBDA>>(lam);
+
+		return reslam;
+	}
 }
 
 #endif // !LAMBDA_H
